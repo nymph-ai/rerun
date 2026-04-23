@@ -5,6 +5,7 @@
 #include "datatypes/absolute_time_range.hpp"
 #include "datatypes/angle.hpp"
 #include "datatypes/annotation_info.hpp"
+#include "datatypes/audio_timestamp.hpp"
 #include "datatypes/blob.hpp"
 #include "datatypes/bool.hpp"
 #include "datatypes/channel_count_pair.hpp"

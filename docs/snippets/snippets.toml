@@ -139,6 +139,7 @@ features = [
 backwards_check = [
   "archetypes/image_advanced", # Uses Pillow to encode a PNG; Pillow encodes differently on different OSes, so the bytes in the RRD won't match the checked-in reference.
   "archetypes/video_stream_synthetic", # Video encodes differently on CI :(
+  "archetypes/audio_stream_synthetic", # Opus encodes differently on CI :(
   "concepts/explicit_recording", # The file path differs locally and on CI
   "howto/convert_mcap_protobuf", # Processes video from MCAP, non-deterministic encoding
   "howto/convert_mcap_protobuf_send_column",
@@ -349,6 +350,10 @@ backwards_check = [
   "rust", # Blueprint API doesn't exist for C++/Rust
 ]
 "archetypes/video_stream_synthetic" = [
+  "cpp", # Not implemented
+  "rust", # Not implemented
+]
+"archetypes/audio_stream_synthetic" = [
   "cpp", # Not implemented
   "rust", # Not implemented
 ]

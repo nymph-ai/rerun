@@ -19,6 +19,7 @@ UInt16
 
 ## Used by
 
+* [`AudioChannelCount`](../components/audio_channel_count.md?speculative-link)
 * [`ChannelCountPair`](../datatypes/channel_count_pair.md)
 * [`ChannelId`](../components/channel_id.md)
 * [`SchemaId`](../components/schema_id.md)

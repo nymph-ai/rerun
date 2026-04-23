@@ -1,0 +1,51 @@
+namespace rerun.archetypes;
+
+/// A complete audio asset.
+///
+/// Represents a self-describing audio container (Ogg, FLAC, MP4/M4A, …) or
+/// a raw encoded blob accompanied by explicit codec and rate metadata.
+///
+/// Supported container media types initially:
+/// * `audio/ogg` — Opus in Ogg, fully playable.
+/// * `audio/flac` — lossless, fully playable.
+///
+/// To place the asset on a timeline, log a companion
+/// [archetypes.AudioSampleReference] on the same (or a referencing) entity
+/// at each playhead position you want the asset aligned to.
+table AssetAudio (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer_none"
+) {
+  // --- Required ---
+
+  /// The raw bytes of the audio asset.
+  blob: rerun.components.Blob ("attr.rerun.component_required", "attr.rerun.component_no_ui_edit", order: 1000);
+
+  // --- Recommended ---
+
+  /// The IANA media type of the asset.
+  ///
+  /// If omitted, the viewer will try to sniff from the first bytes of the blob.
+  /// If sniffing fails the asset is stored but playback is disabled.
+  media_type: rerun.components.MediaType ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  // --- Optional ---
+
+  /// Audio codec of the enclosed samples.
+  ///
+  /// When the asset is a self-describing container (`audio/ogg`, `audio/flac`, …)
+  /// this is redundant; logging it makes analysis queries cheaper.
+  codec: rerun.components.AudioCodec ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Decoded sample rate in Hz.
+  sample_rate: rerun.components.AudioSampleRate ("attr.rerun.component_optional", nullable, order: 3100);
+
+  /// Decoded channel count.
+  channel_count: rerun.components.AudioChannelCount ("attr.rerun.component_optional", nullable, order: 3200);
+
+  /// Speaker arrangement for the channels.
+  channel_layout: rerun.components.AudioChannelLayout ("attr.rerun.component_optional", nullable, order: 3300);
+}

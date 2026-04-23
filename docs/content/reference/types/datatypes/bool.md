@@ -19,6 +19,8 @@ Boolean
 
 ## Used by
 
+* [`AudioDiscontinuity`](../components/audio_discontinuity.md?speculative-link)
+* [`AudioSeekable`](../components/audio_seekable.md?speculative-link)
 * [`ClearIsRecursive`](../components/clear_is_recursive.md)
 * [`Interactive`](../components/interactive.md)
 * [`ShowLabels`](../components/show_labels.md)

@@ -1,0 +1,35 @@
+namespace rerun.archetypes;
+
+/// References a single position inside an [archetypes.AssetAudio].
+///
+/// Used to bind the media time of a complete audio asset to a Rerun timeline.
+/// Log one [archetypes.AudioSampleReference] at each timeline position where
+/// the asset should be "at" the given media timestamp; between references
+/// the viewer interpolates linearly in media-time.
+///
+/// To play an entire asset aligned to a timeline, log a reference at the
+/// start of the asset and another at the end — or, equivalently, log a
+/// reference per visible frame for sub-frame alignment.
+table AudioSampleReference (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioSampleReference"
+) {
+    // --- Required ---
+
+    /// The media-time position inside the referenced audio asset.
+    ///
+    /// Timestamps are nanoseconds relative to the start of the asset.
+    timestamp: rerun.components.AudioTimestamp ("attr.rerun.component_required", order: 1000);
+
+    // --- Optional ---
+
+    /// Optional reference to the entity that carries the [archetypes.AssetAudio].
+    ///
+    /// If omitted, the asset is assumed to be on the same entity.
+    /// Blueprint overrides on the referenced asset are ignored — this is
+    /// always resolved against the data store.
+    audio_reference: rerun.components.EntityPath ("attr.rerun.component_optional", nullable, order: 2000);
+}

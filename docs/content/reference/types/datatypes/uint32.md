@@ -17,3 +17,7 @@ UInt32
  * 🦀 [Rust API docs for `UInt32`](https://docs.rs/rerun/latest/rerun/datatypes/struct.UInt32.html)
 
 
+## Used by
+
+* [`AudioPrimingDelay`](../components/audio_priming_delay.md?speculative-link)
+* [`AudioSampleRate`](../components/audio_sample_rate.md?speculative-link)

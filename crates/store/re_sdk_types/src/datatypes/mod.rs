@@ -4,6 +4,7 @@ mod angle;
 mod angle_ext;
 mod annotation_info;
 mod annotation_info_ext;
+mod audio_timestamp;
 mod blob;
 mod blob_ext;
 mod channel_count_pair;
@@ -73,6 +74,7 @@ mod view_coordinates_ext;
 
 pub use self::angle::Angle;
 pub use self::annotation_info::AnnotationInfo;
+pub use self::audio_timestamp::AudioTimestamp;
 pub use self::blob::Blob;
 pub use self::channel_count_pair::ChannelCountPair;
 pub use self::channel_datatype::ChannelDatatype;

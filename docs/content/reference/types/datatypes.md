@@ -10,6 +10,7 @@ Data types are the lowest layer of the data model hierarchy. They are re-usable 
 * [`AbsoluteTimeRange`](datatypes/absolute_time_range.md): Two [`datatypes.TimeInt`](https://rerun.io/docs/reference/types/datatypes/time_int) describing a range of time.
 * [`Angle`](datatypes/angle.md): Angle in radians.
 * [`AnnotationInfo`](datatypes/annotation_info.md): Annotation info annotating a class id or key-point id.
+* [`AudioTimestamp`](datatypes/audio_timestamp.md): Presentation timestamp within an [`archetypes.AssetAudio`](https://rerun.io/docs/reference/types/archetypes/asset_audio?speculative-link).
 * [`Blob`](datatypes/blob.md): A binary blob of data.
 * [`Bool`](datatypes/bool.md): A single boolean.
 * [`ChannelCountPair`](datatypes/channel_count_pair.md): A pair representing a channel ID and its associated message count.

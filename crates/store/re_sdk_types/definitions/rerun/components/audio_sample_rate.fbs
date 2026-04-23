@@ -1,0 +1,19 @@
+namespace rerun.components;
+
+/// Audio sample rate in Hertz.
+///
+/// Typical values: `8000`, `16000`, `24000`, `44100`, `48000`.
+///
+/// For Opus, this is the decoder's reported output rate; libopus will
+/// internally resample to this value.
+struct AudioSampleRate (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint32]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  hz: rerun.datatypes.UInt32 (order: 100);
+}

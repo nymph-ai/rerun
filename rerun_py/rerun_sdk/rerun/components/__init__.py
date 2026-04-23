@@ -15,6 +15,23 @@ from .annotation_context import (
     AnnotationContextBatch,
     AnnotationContextLike,
 )
+from .audio_channel_count import AudioChannelCount, AudioChannelCountBatch
+from .audio_channel_layout import (
+    AudioChannelLayout,
+    AudioChannelLayoutArrayLike,
+    AudioChannelLayoutBatch,
+    AudioChannelLayoutLike,
+)
+from .audio_chunk import AudioChunk, AudioChunkBatch
+from .audio_codec import AudioCodec, AudioCodecArrayLike, AudioCodecBatch, AudioCodecLike
+from .audio_discontinuity import AudioDiscontinuity, AudioDiscontinuityBatch
+from .audio_duration_samples import AudioDurationSamples, AudioDurationSamplesBatch
+from .audio_priming_delay import AudioPrimingDelay, AudioPrimingDelayBatch
+from .audio_sample_rate import AudioSampleRate, AudioSampleRateBatch
+from .audio_seekable import AudioSeekable, AudioSeekableBatch
+from .audio_sequence_number import AudioSequenceNumber, AudioSequenceNumberBatch
+from .audio_stream_id import AudioStreamId, AudioStreamIdBatch
+from .audio_timestamp import AudioTimestamp, AudioTimestampBatch
 from .axis_length import AxisLength, AxisLengthBatch
 from .blob import Blob, BlobBatch
 from .cell_size import CellSize, CellSizeBatch
@@ -128,6 +145,34 @@ __all__ = [
     "AnnotationContextArrayLike",
     "AnnotationContextBatch",
     "AnnotationContextLike",
+    "AudioChannelCount",
+    "AudioChannelCountBatch",
+    "AudioChannelLayout",
+    "AudioChannelLayoutArrayLike",
+    "AudioChannelLayoutBatch",
+    "AudioChannelLayoutLike",
+    "AudioChunk",
+    "AudioChunkBatch",
+    "AudioCodec",
+    "AudioCodecArrayLike",
+    "AudioCodecBatch",
+    "AudioCodecLike",
+    "AudioDiscontinuity",
+    "AudioDiscontinuityBatch",
+    "AudioDurationSamples",
+    "AudioDurationSamplesBatch",
+    "AudioPrimingDelay",
+    "AudioPrimingDelayBatch",
+    "AudioSampleRate",
+    "AudioSampleRateBatch",
+    "AudioSeekable",
+    "AudioSeekableBatch",
+    "AudioSequenceNumber",
+    "AudioSequenceNumberBatch",
+    "AudioStreamId",
+    "AudioStreamIdBatch",
+    "AudioTimestamp",
+    "AudioTimestampBatch",
     "AxisLength",
     "AxisLengthBatch",
     "Blob",

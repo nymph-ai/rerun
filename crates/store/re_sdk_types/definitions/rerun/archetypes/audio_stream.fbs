@@ -1,0 +1,78 @@
+namespace rerun.archetypes;
+
+/// A time-evolving stream of encoded audio chunks.
+///
+/// [archetypes.AudioStream] is the streaming counterpart of [archetypes.AssetAudio]:
+/// each logged row is a self-contained, decodable segment and the row's
+/// timeline timestamp is treated as the presentation timestamp (PTS) of the
+/// first PCM sample in the segment.
+///
+/// Static components (`codec`, `sample_rate`, `channel_count`, `channel_layout`,
+/// `priming_delay`) are expected to be constant over the lifetime of the
+/// stream and are typically logged once with `static=True`. The per-row
+/// components (`chunk`, `duration_samples`, `stream_id`, `sequence_number`,
+/// `discontinuity`, `seekable`) are logged with each segment.
+///
+/// Segments may arrive out of order in the log but the viewer resumes
+/// playback from the nearest preceding seekable boundary on any seek.
+///
+/// \example archetypes/audio_stream_synthetic missing="cpp,rs" title="Live streaming of on-the-fly encoded Opus audio"
+table AudioStream (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioStream"
+) {
+  // --- Required, static ---
+
+  /// The codec used to encode chunks.
+  codec: rerun.components.AudioCodec ("attr.rerun.component_required", "attr.rerun.component_no_ui_edit", order: 1000);
+
+  /// Sample rate reported by / requested of the decoder, in Hz.
+  sample_rate: rerun.components.AudioSampleRate ("attr.rerun.component_required", order: 1100);
+
+  /// Number of audio channels.
+  channel_count: rerun.components.AudioChannelCount ("attr.rerun.component_required", order: 1200);
+
+  // --- Recommended, per-row ---
+
+  /// One decodable segment of encoded audio.
+  ///
+  /// The current row timestamp is used as PTS for the first sample. There is
+  /// no separate DTS — Opus has no decode-order reordering; codecs that need
+  /// it may be added later with an additional component.
+  chunk: rerun.components.AudioChunk ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  /// Number of PCM samples per channel produced by decoding this chunk.
+  ///
+  /// Logged per row so the viewer never has to decode the payload to know
+  /// the span length. Enables fast gap detection and scrubbing.
+  duration_samples: rerun.components.AudioDurationSamples ("attr.rerun.component_recommended", nullable, order: 2100);
+
+  // --- Optional ---
+
+  /// Speaker arrangement for the channels.
+  channel_layout: rerun.components.AudioChannelLayout ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Encoder pre-roll, in samples. Discarded by the decoder at stream start.
+  priming_delay: rerun.components.AudioPrimingDelay ("attr.rerun.component_optional", nullable, order: 3100);
+
+  /// Stream continuity marker.
+  ///
+  /// A change in value signals a recorder restart and is treated as an
+  /// implicit discontinuity.
+  stream_id: rerun.components.AudioStreamId ("attr.rerun.component_optional", nullable, order: 3200);
+
+  /// Monotonic per-stream sequence number. Gaps surface as a diagnostic.
+  sequence_number: rerun.components.AudioSequenceNumber ("attr.rerun.component_optional", nullable, order: 3300);
+
+  /// If true, the decoder is reset before this chunk is processed.
+  discontinuity: rerun.components.AudioDiscontinuity ("attr.rerun.component_optional", nullable, order: 3400);
+
+  /// If true, this chunk is an independent seek target.
+  ///
+  /// Defaults to `true` for Opus; codecs with inter-frame dependencies may
+  /// set it false on non-key segments.
+  seekable: rerun.components.AudioSeekable ("attr.rerun.component_optional", nullable, order: 3500);
+}

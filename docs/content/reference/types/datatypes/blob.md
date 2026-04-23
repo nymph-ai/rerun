@@ -19,6 +19,7 @@ List(non-null UInt8)
 
 ## Used by
 
+* [`AudioChunk`](../components/audio_chunk.md?speculative-link)
 * [`Blob`](../components/blob.md)
 * [`ImageBuffer`](../components/image_buffer.md)
 * [`VideoSample`](../components/video_sample.md)

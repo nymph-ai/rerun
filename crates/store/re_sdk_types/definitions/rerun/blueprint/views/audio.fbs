@@ -1,0 +1,13 @@
+namespace rerun.blueprint.views;
+
+/// A view for audio streams and assets.
+///
+/// Displays per-entity transport state, static codec metadata (codec,
+/// sample rate, channel count), and diagnostic signals (gaps,
+/// discontinuities, out-of-order segments) for the audio pipeline.
+///
+/// Playback follows the viewer's timeline — the view does not own its
+/// own clock.
+table AudioView (
+  "attr.rerun.view_identifier": "Audio"
+) {}

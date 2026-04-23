@@ -10,6 +10,7 @@ from .absolute_time_range import (
 )
 from .angle import Angle, AngleArrayLike, AngleBatch, AngleLike
 from .annotation_info import AnnotationInfo, AnnotationInfoArrayLike, AnnotationInfoBatch, AnnotationInfoLike
+from .audio_timestamp import AudioTimestamp, AudioTimestampArrayLike, AudioTimestampBatch, AudioTimestampLike
 from .blob import Blob, BlobArrayLike, BlobBatch, BlobLike
 from .bool import Bool, BoolArrayLike, BoolBatch, BoolLike
 from .channel_count_pair import ChannelCountPair, ChannelCountPairArrayLike, ChannelCountPairBatch, ChannelCountPairLike
@@ -95,6 +96,10 @@ __all__ = [
     "AnnotationInfoArrayLike",
     "AnnotationInfoBatch",
     "AnnotationInfoLike",
+    "AudioTimestamp",
+    "AudioTimestampArrayLike",
+    "AudioTimestampBatch",
+    "AudioTimestampLike",
     "Blob",
     "BlobArrayLike",
     "BlobBatch",

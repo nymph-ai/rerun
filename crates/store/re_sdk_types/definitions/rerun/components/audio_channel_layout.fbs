@@ -1,0 +1,38 @@
+namespace rerun.components;
+
+/// Speaker arrangement for the channels in an audio stream.
+///
+/// Layouts follow `WebAudio` / `WebCodecs` conventions; unsupported or exotic
+/// arrangements should log [components.AudioChannelLayout.Unspecified] and
+/// are treated as raw interleaved channels by the viewer.
+enum AudioChannelLayout: uint (
+    "attr.docs.unreleased",
+    "attr.rerun.state": "unstable"
+) {
+    /// Invalid value. Won't show up in generated types.
+    Invalid = 0,
+
+    /// Single channel.
+    Mono = 1,
+
+    /// L, R.
+    Stereo = 2,
+
+    /// L, R, C.
+    Lcr = 3,
+
+    /// L, R, LS, RS.
+    Quad = 4,
+
+    /// L, R, C, LS, RS (no LFE).
+    FiveDot = 5,
+
+    /// L, R, C, LFE, LS, RS.
+    FiveDotOne = 6,
+
+    /// L, R, C, LFE, LS, RS, SL, SR.
+    SevenDotOne = 8,
+
+    /// First-order ambisonics (W, Y, Z, X). 4 channels.
+    Ambisonic1stOrder = 10,
+}

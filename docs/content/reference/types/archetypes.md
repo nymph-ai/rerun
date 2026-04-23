@@ -10,6 +10,12 @@ built-in support. See [Entities and Components](../../concepts/logging-and-inges
 
 This page lists all built-in archetypes.
 
+## Audio
+
+* [`AssetAudio`](archetypes/asset_audio.md): A complete audio asset.
+* [`AudioSampleReference`](archetypes/audio_sample_reference.md): References a single position inside an [`archetypes.AssetAudio`](https://rerun.io/docs/reference/types/archetypes/asset_audio?speculative-link).
+* [`AudioStream`](archetypes/audio_stream.md): A time-evolving stream of encoded audio chunks.
+
 ## Geospatial
 
 * [`GeoLineStrings`](archetypes/geo_line_strings.md): Geospatial line strings with positions expressed in [EPSG:4326](https://epsg.io/4326) latitude and longitude (North/East-positive degrees), and optional colors and radii.

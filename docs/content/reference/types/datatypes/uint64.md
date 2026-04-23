@@ -19,5 +19,8 @@ UInt64
 
 ## Used by
 
+* [`AudioDurationSamples`](../components/audio_duration_samples.md?speculative-link)
+* [`AudioSequenceNumber`](../components/audio_sequence_number.md?speculative-link)
+* [`AudioStreamId`](../components/audio_stream_id.md?speculative-link)
 * [`ChannelCountPair`](../datatypes/channel_count_pair.md)
 * [`Count`](../components/count.md)

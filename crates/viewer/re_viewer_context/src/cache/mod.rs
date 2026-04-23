@@ -3,6 +3,8 @@
 //! Caches are registered lazily upon first use, see [`Memoizers::entry`].
 //! The concrete caches exposed here are always available for all viewer crates.
 
+mod audio_asset_cache;
+mod audio_stream_cache;
 mod cache_trait;
 mod image_decode_cache;
 mod image_stats_cache;
@@ -20,6 +22,10 @@ pub use store_cache::StoreCache;
 // Caches are fully dynamic and registration based, so they can be added at runtime by any crate.
 // The reason this happens it that various viewer crates wants to access these, mostly for ui purposes.
 // Ideally, they would only depend on the ones needed.
+pub use audio_asset_cache::{AudioAssetCache, AudioAssetLoadError, PlayableAudioAsset};
+pub use audio_stream_cache::{
+    AudioStreamCache, AudioStreamProcessingError, PlayableAudioStream, SharablePlayableAudioStream,
+};
 pub use image_decode_cache::ImageDecodeCache;
 pub use image_stats_cache::ImageStatsCache;
 pub use tensor_stats_cache::TensorStatsCache;
