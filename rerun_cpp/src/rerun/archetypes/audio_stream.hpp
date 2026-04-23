@@ -16,6 +16,7 @@
 #include "../components/audio_sample_rate.hpp"
 #include "../components/audio_seekable.hpp"
 #include "../components/audio_sequence_number.hpp"
+#include "../components/audio_source_id.hpp"
 #include "../components/audio_stream_id.hpp"
 #include "../result.hpp"
 
@@ -90,6 +91,13 @@ namespace rerun::archetypes {
         /// set it false on non-key segments.
         std::optional<ComponentBatch> seekable;
 
+        /// Stable identity of the logical audio source.
+        ///
+        /// This lets waveform summaries, seek indexes, annotations, and exported
+        /// clips refer to the same source even when they are logged on separate
+        /// entities or materialized in different passes.
+        std::optional<ComponentBatch> source_id;
+
       public:
         /// The name of the archetype as used in `ComponentDescriptor`s.
         static constexpr const char ArchetypeName[] = "rerun.archetypes.AudioStream";
@@ -148,6 +156,11 @@ namespace rerun::archetypes {
         static constexpr auto Descriptor_seekable = ComponentDescriptor(
             ArchetypeName, "AudioStream:seekable",
             Loggable<rerun::components::AudioSeekable>::ComponentType
+        );
+        /// `ComponentDescriptor` for the `source_id` field.
+        static constexpr auto Descriptor_source_id = ComponentDescriptor(
+            ArchetypeName, "AudioStream:source_id",
+            Loggable<rerun::components::AudioSourceId>::ComponentType
         );
 
       public:
@@ -404,6 +417,29 @@ namespace rerun::archetypes {
         ) && {
             seekable =
                 ComponentBatch::from_loggable(_seekable, Descriptor_seekable).value_or_throw();
+            return std::move(*this);
+        }
+
+        /// Stable identity of the logical audio source.
+        ///
+        /// This lets waveform summaries, seek indexes, annotations, and exported
+        /// clips refer to the same source even when they are logged on separate
+        /// entities or materialized in different passes.
+        AudioStream with_source_id(const rerun::components::AudioSourceId& _source_id) && {
+            source_id =
+                ComponentBatch::from_loggable(_source_id, Descriptor_source_id).value_or_throw();
+            return std::move(*this);
+        }
+
+        /// This method makes it possible to pack multiple `source_id` in a single component batch.
+        ///
+        /// This only makes sense when used in conjunction with `columns`. `with_source_id` should
+        /// be used when logging a single row's worth of data.
+        AudioStream with_many_source_id(
+            const Collection<rerun::components::AudioSourceId>& _source_id
+        ) && {
+            source_id =
+                ComponentBatch::from_loggable(_source_id, Descriptor_source_id).value_or_throw();
             return std::move(*this);
         }
 

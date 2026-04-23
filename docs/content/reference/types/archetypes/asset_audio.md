@@ -29,6 +29,8 @@ at each playhead position you want the asset aligned to.
 * `sample_rate`: [`AudioSampleRate`](../components/audio_sample_rate.md)
 * `channel_count`: [`AudioChannelCount`](../components/audio_channel_count.md)
 * `channel_layout`: [`AudioChannelLayout`](../components/audio_channel_layout.md)
+* `duration_samples`: [`AudioDurationSamples`](../components/audio_duration_samples.md)
+* `source_id`: [`AudioSourceId`](../components/audio_source_id.md)
 
 
 ## Can be shown in

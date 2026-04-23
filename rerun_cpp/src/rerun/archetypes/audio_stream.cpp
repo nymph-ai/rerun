@@ -41,12 +41,15 @@ namespace rerun::archetypes {
         archetype.seekable =
             ComponentBatch::empty<rerun::components::AudioSeekable>(Descriptor_seekable)
                 .value_or_throw();
+        archetype.source_id =
+            ComponentBatch::empty<rerun::components::AudioSourceId>(Descriptor_source_id)
+                .value_or_throw();
         return archetype;
     }
 
     Collection<ComponentColumn> AudioStream::columns(const Collection<uint32_t>& lengths_) {
         std::vector<ComponentColumn> columns;
-        columns.reserve(11);
+        columns.reserve(12);
         if (codec.has_value()) {
             columns.push_back(codec.value().partitioned(lengths_).value_or_throw());
         }
@@ -79,6 +82,9 @@ namespace rerun::archetypes {
         }
         if (seekable.has_value()) {
             columns.push_back(seekable.value().partitioned(lengths_).value_or_throw());
+        }
+        if (source_id.has_value()) {
+            columns.push_back(source_id.value().partitioned(lengths_).value_or_throw());
         }
         return columns;
     }
@@ -117,6 +123,9 @@ namespace rerun::archetypes {
         if (seekable.has_value()) {
             return columns(std::vector<uint32_t>(seekable.value().length(), 1));
         }
+        if (source_id.has_value()) {
+            return columns(std::vector<uint32_t>(source_id.value().length(), 1));
+        }
         return Collection<ComponentColumn>();
     }
 } // namespace rerun::archetypes
@@ -128,7 +137,7 @@ namespace rerun {
     ) {
         using namespace archetypes;
         std::vector<ComponentBatch> cells;
-        cells.reserve(11);
+        cells.reserve(12);
 
         if (archetype.codec.has_value()) {
             cells.push_back(archetype.codec.value());
@@ -162,6 +171,9 @@ namespace rerun {
         }
         if (archetype.seekable.has_value()) {
             cells.push_back(archetype.seekable.value());
+        }
+        if (archetype.source_id.has_value()) {
+            cells.push_back(archetype.source_id.value());
         }
 
         return rerun::take_ownership(std::move(cells));

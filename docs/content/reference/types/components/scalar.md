@@ -24,4 +24,6 @@ Float64
 
 ## Used by
 
+* [`AudioAnnotationSpan`](../archetypes/audio_annotation_span.md?speculative-link)
+* [`AudioWaveformSummary`](../archetypes/audio_waveform_summary.md?speculative-link)
 * [`Scalars`](../archetypes/scalars.md)

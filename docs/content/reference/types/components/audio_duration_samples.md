@@ -28,4 +28,7 @@ UInt64
 
 ## Used by
 
+* [`AssetAudio`](../archetypes/asset_audio.md?speculative-link)
+* [`AudioSeekIndex`](../archetypes/audio_seek_index.md?speculative-link)
 * [`AudioStream`](../archetypes/audio_stream.md?speculative-link)
+* [`AudioWaveformSummary`](../archetypes/audio_waveform_summary.md?speculative-link)

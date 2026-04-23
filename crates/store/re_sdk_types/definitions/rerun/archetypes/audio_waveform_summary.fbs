@@ -1,0 +1,50 @@
+namespace rerun.archetypes;
+
+/// Multi-resolution waveform summary buckets for an audio source.
+///
+/// Each row stores one batch of summary buckets. The `bucket_start`,
+/// `bucket_duration_samples`, `min_amplitude`, and `max_amplitude` arrays are
+/// parallel arrays and should have the same length. Optional arrays such as
+/// `rms_amplitude` and `activity` are also parallel when present.
+///
+/// These summaries are durable derived data: they can be logged, cached,
+/// queried, exported, and rendered without decoding source audio on every pan
+/// or zoom.
+table AudioWaveformSummary (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioWaveformSummary",
+  "attr.rust.derive": "PartialEq"
+) {
+  // --- Required ---
+
+  /// Media-time start of each summary bucket, in nanoseconds.
+  bucket_start: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1000);
+
+  /// Duration of each summary bucket, in samples per channel.
+  bucket_duration_samples: [rerun.components.AudioDurationSamples] ("attr.rerun.component_required", order: 1100);
+
+  /// Minimum normalized amplitude in each bucket.
+  min_amplitude: [rerun.components.Scalar] ("attr.rerun.component_required", order: 1200);
+
+  /// Maximum normalized amplitude in each bucket.
+  max_amplitude: [rerun.components.Scalar] ("attr.rerun.component_required", order: 1300);
+
+  // --- Recommended ---
+
+  /// Optional RMS or loudness-like summary for each bucket.
+  rms_amplitude: [rerun.components.Scalar] ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  /// Optional activity/silence score for each bucket. Convention: 0 is silent, 1 is active.
+  activity: [rerun.components.Scalar] ("attr.rerun.component_recommended", nullable, order: 2100);
+
+  // --- Optional ---
+
+  /// Stable identity of the audio source this summary was derived from.
+  source_id: rerun.components.AudioSourceId ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Entity carrying the source [archetypes.AudioStream] or [archetypes.AssetAudio].
+  audio_reference: rerun.components.EntityPath ("attr.rerun.component_optional", nullable, order: 3100);
+}

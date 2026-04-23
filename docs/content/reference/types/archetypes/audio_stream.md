@@ -37,6 +37,7 @@ playback from the nearest preceding seekable boundary on any seek.
 * `sequence_number`: [`AudioSequenceNumber`](../components/audio_sequence_number.md)
 * `discontinuity`: [`AudioDiscontinuity`](../components/audio_discontinuity.md)
 * `seekable`: [`AudioSeekable`](../components/audio_seekable.md)
+* `source_id`: [`AudioSourceId`](../components/audio_source_id.md)
 
 
 ## Can be shown in

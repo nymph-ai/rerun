@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use re_chunk_store::{AbsoluteTimeRange, LatestAtQuery, RangeQuery};
 use re_log_types::{EntityPath, TimeInt};
-use re_sdk_types::Archetype as _;
-use re_sdk_types::archetypes::AudioStream;
+use re_sdk_types::archetypes::{
+    AudioAnnotationSpan, AudioEvent, AudioSeekIndex, AudioStream, AudioWaveformSummary,
+};
 use re_sdk_types::components;
+use re_sdk_types::{Archetype as _, ComponentDescriptor};
 use re_viewer_context::{
     AudioStreamCache, IdentifiedViewSystem, ViewContext, ViewContextCollection, ViewQuery,
     ViewSystemExecutionError, VisualizerExecutionOutput, VisualizerQueryInfo, VisualizerSystem,
@@ -50,6 +52,39 @@ pub struct AudioStreamConfig {
     pub channel_count: u16,
 }
 
+/// Queryable lane kinds rendered by the Audio view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioLaneKind {
+    /// Multi-resolution waveform buckets.
+    WaveformSummary,
+    /// Materialized seek-index entries.
+    SeekIndex,
+    /// Time-span annotations.
+    AnnotationSpan,
+    /// Point events.
+    Event,
+}
+
+impl AudioLaneKind {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::WaveformSummary => "Waveform summary",
+            Self::SeekIndex => "Seek index",
+            Self::AnnotationSpan => "Annotation spans",
+            Self::Event => "Events",
+        }
+    }
+}
+
+/// Per-entity lane summary produced by non-source audio visualizers.
+#[derive(Clone, Debug)]
+pub struct AudioLaneSummary {
+    pub entity_path: EntityPath,
+    pub kind: AudioLaneKind,
+    pub item_count: usize,
+    pub media_time_range_ns: Option<(i64, i64)>,
+}
+
 /// The audio visualizer — produces summary entries for the audio view.
 #[derive(Default)]
 pub struct AudioStreamVisualizerSystem;
@@ -90,6 +125,154 @@ impl VisualizerSystem for AudioStreamVisualizerSystem {
         }
 
         Ok(output.with_visualizer_data(summaries))
+    }
+}
+
+/// Waveform-summary visualizer.
+#[derive(Default)]
+pub struct AudioWaveformSummaryVisualizerSystem;
+
+impl IdentifiedViewSystem for AudioWaveformSummaryVisualizerSystem {
+    fn identifier() -> re_viewer_context::ViewSystemIdentifier {
+        "AudioWaveformSummary".into()
+    }
+}
+
+impl VisualizerSystem for AudioWaveformSummaryVisualizerSystem {
+    fn visualizer_query_info(
+        &self,
+        _app_options: &re_viewer_context::AppOptions,
+    ) -> VisualizerQueryInfo {
+        VisualizerQueryInfo::single_required_component::<components::AudioTimestamp>(
+            &AudioWaveformSummary::descriptor_bucket_start(),
+            &AudioWaveformSummary::all_components(),
+        )
+    }
+
+    fn execute(
+        &self,
+        ctx: &ViewContext<'_>,
+        view_query: &ViewQuery<'_>,
+        _context_systems: &ViewContextCollection,
+    ) -> Result<VisualizerExecutionOutput, ViewSystemExecutionError> {
+        Ok(build_lane_output(
+            ctx,
+            view_query,
+            Self::identifier(),
+            AudioLaneKind::WaveformSummary,
+            AudioWaveformSummary::descriptor_bucket_start(),
+        ))
+    }
+}
+
+/// Seek-index visualizer.
+#[derive(Default)]
+pub struct AudioSeekIndexVisualizerSystem;
+
+impl IdentifiedViewSystem for AudioSeekIndexVisualizerSystem {
+    fn identifier() -> re_viewer_context::ViewSystemIdentifier {
+        "AudioSeekIndex".into()
+    }
+}
+
+impl VisualizerSystem for AudioSeekIndexVisualizerSystem {
+    fn visualizer_query_info(
+        &self,
+        _app_options: &re_viewer_context::AppOptions,
+    ) -> VisualizerQueryInfo {
+        VisualizerQueryInfo::single_required_component::<components::AudioTimestamp>(
+            &AudioSeekIndex::descriptor_media_time(),
+            &AudioSeekIndex::all_components(),
+        )
+    }
+
+    fn execute(
+        &self,
+        ctx: &ViewContext<'_>,
+        view_query: &ViewQuery<'_>,
+        _context_systems: &ViewContextCollection,
+    ) -> Result<VisualizerExecutionOutput, ViewSystemExecutionError> {
+        Ok(build_lane_output(
+            ctx,
+            view_query,
+            Self::identifier(),
+            AudioLaneKind::SeekIndex,
+            AudioSeekIndex::descriptor_media_time(),
+        ))
+    }
+}
+
+/// Annotation-span visualizer.
+#[derive(Default)]
+pub struct AudioAnnotationSpanVisualizerSystem;
+
+impl IdentifiedViewSystem for AudioAnnotationSpanVisualizerSystem {
+    fn identifier() -> re_viewer_context::ViewSystemIdentifier {
+        "AudioAnnotationSpan".into()
+    }
+}
+
+impl VisualizerSystem for AudioAnnotationSpanVisualizerSystem {
+    fn visualizer_query_info(
+        &self,
+        _app_options: &re_viewer_context::AppOptions,
+    ) -> VisualizerQueryInfo {
+        VisualizerQueryInfo::single_required_component::<components::AudioTimestamp>(
+            &AudioAnnotationSpan::descriptor_start_time(),
+            &AudioAnnotationSpan::all_components(),
+        )
+    }
+
+    fn execute(
+        &self,
+        ctx: &ViewContext<'_>,
+        view_query: &ViewQuery<'_>,
+        _context_systems: &ViewContextCollection,
+    ) -> Result<VisualizerExecutionOutput, ViewSystemExecutionError> {
+        Ok(build_lane_output(
+            ctx,
+            view_query,
+            Self::identifier(),
+            AudioLaneKind::AnnotationSpan,
+            AudioAnnotationSpan::descriptor_start_time(),
+        ))
+    }
+}
+
+/// Audio point-event visualizer.
+#[derive(Default)]
+pub struct AudioEventVisualizerSystem;
+
+impl IdentifiedViewSystem for AudioEventVisualizerSystem {
+    fn identifier() -> re_viewer_context::ViewSystemIdentifier {
+        "AudioEvent".into()
+    }
+}
+
+impl VisualizerSystem for AudioEventVisualizerSystem {
+    fn visualizer_query_info(
+        &self,
+        _app_options: &re_viewer_context::AppOptions,
+    ) -> VisualizerQueryInfo {
+        VisualizerQueryInfo::single_required_component::<components::AudioTimestamp>(
+            &AudioEvent::descriptor_event_time(),
+            &AudioEvent::all_components(),
+        )
+    }
+
+    fn execute(
+        &self,
+        ctx: &ViewContext<'_>,
+        view_query: &ViewQuery<'_>,
+        _context_systems: &ViewContextCollection,
+    ) -> Result<VisualizerExecutionOutput, ViewSystemExecutionError> {
+        Ok(build_lane_output(
+            ctx,
+            view_query,
+            Self::identifier(),
+            AudioLaneKind::Event,
+            AudioEvent::descriptor_event_time(),
+        ))
     }
 }
 
@@ -270,4 +453,76 @@ fn resolve_static_config(
         sample_rate: sample_rate.0.0,
         channel_count: channel_count.0.0,
     })
+}
+
+fn build_lane_output(
+    ctx: &ViewContext<'_>,
+    view_query: &ViewQuery<'_>,
+    visualizer: re_viewer_context::ViewSystemIdentifier,
+    kind: AudioLaneKind,
+    time_descriptor: ComponentDescriptor,
+) -> VisualizerExecutionOutput {
+    re_tracing::profile_function!();
+
+    let mut summaries: BTreeMap<EntityPath, AudioLaneSummary> = BTreeMap::new();
+
+    for (data_result, _instruction) in view_query.iter_visualizer_instruction_for(visualizer) {
+        let summary = build_lane_summary(
+            ctx,
+            data_result.entity_path.clone(),
+            view_query,
+            kind,
+            &time_descriptor,
+        );
+        summaries.insert(data_result.entity_path.clone(), summary);
+    }
+
+    VisualizerExecutionOutput::default().with_visualizer_data(summaries)
+}
+
+fn build_lane_summary(
+    ctx: &ViewContext<'_>,
+    entity_path: EntityPath,
+    view_query: &ViewQuery<'_>,
+    kind: AudioLaneKind,
+    time_descriptor: &ComponentDescriptor,
+) -> AudioLaneSummary {
+    let store = ctx.recording();
+    let query = RangeQuery::new(view_query.timeline, AbsoluteTimeRange::EVERYTHING);
+    let chunks = store.storage_engine().store().range_relevant_chunks(
+        re_chunk_store::ChunkTrackingMode::Ignore,
+        &query,
+        &entity_path,
+        time_descriptor.component,
+    );
+
+    let mut item_count = 0;
+    let mut min_media_time: Option<i64> = None;
+    let mut max_media_time: Option<i64> = None;
+
+    for chunk in &chunks.chunks {
+        let time_iter =
+            chunk.iter_component::<components::AudioTimestamp>(time_descriptor.component);
+
+        for time_item in time_iter {
+            let times = time_item.as_slice();
+            item_count += times.len();
+
+            for time in times {
+                let ns = time.0.0;
+                min_media_time = Some(min_media_time.map_or(ns, |min| min.min(ns)));
+                max_media_time = Some(max_media_time.map_or(ns, |max| max.max(ns)));
+            }
+        }
+    }
+
+    AudioLaneSummary {
+        entity_path,
+        kind,
+        item_count,
+        media_time_range_ns: match (min_media_time, max_media_time) {
+            (Some(min), Some(max)) => Some((min, max)),
+            _ => None,
+        },
+    }
 }

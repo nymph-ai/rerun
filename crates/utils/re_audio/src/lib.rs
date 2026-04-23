@@ -31,7 +31,7 @@ pub mod resampler;
 mod error;
 
 pub use codec::{AudioCodecKind, ChannelLayout};
-pub use decode::{AudioDecoder, DecodedAudio};
+pub use decode::{AudioDecoder, DecodedAudio, DecoderConfig, DecoderFactory, DecoderRegistry};
 pub use error::{AudioError, DecodeError};
 pub use player::{AudioStreamPlayer, SegmentRef, TransportState};
 

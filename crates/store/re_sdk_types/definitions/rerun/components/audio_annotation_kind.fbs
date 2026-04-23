@@ -1,0 +1,41 @@
+namespace rerun.components;
+
+/// Semantic class of an audio-aligned time span.
+///
+/// These variants cover the common observability lanes for speech and agent
+/// replay. Use [components.KeyValuePairs] on the archetype for domain-specific
+/// labels that do not need to become schema.
+enum AudioAnnotationKind: ubyte (
+  "attr.docs.unreleased",
+  "attr.rerun.state": "unstable"
+) {
+  /// Invalid value. Won't show up in generated types.
+  Invalid = 0,
+
+  /// A finalized or partial ASR utterance.
+  AsrUtterance = 1,
+
+  /// A word-level alignment span.
+  Word = 2,
+
+  /// A token-level alignment span.
+  Token = 3,
+
+  /// A diarization speaker turn.
+  SpeakerTurn = 4,
+
+  /// Voice activity detection region.
+  Vad = 5,
+
+  /// Endpointing or turn-boundary decision window.
+  Endpointing = 6,
+
+  /// Synthesized speech emitted by a TTS/model output path.
+  Tts = 7,
+
+  /// Overlap, interruption, or barge-in region.
+  Interruption = 8,
+
+  /// Region marked for error analysis or review.
+  ErrorRegion = 9,
+}

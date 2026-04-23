@@ -8,8 +8,12 @@ from .arrows3d import Arrows3D
 from .asset3d import Asset3D
 from .asset_audio import AssetAudio
 from .asset_video import AssetVideo
+from .audio_annotation_span import AudioAnnotationSpan
+from .audio_event import AudioEvent
 from .audio_sample_reference import AudioSampleReference
+from .audio_seek_index import AudioSeekIndex
 from .audio_stream import AudioStream
+from .audio_waveform_summary import AudioWaveformSummary
 from .bar_chart import BarChart
 from .boxes2d import Boxes2D
 from .boxes3d import Boxes3D
@@ -60,8 +64,12 @@ __all__ = [
     "Asset3D",
     "AssetAudio",
     "AssetVideo",
+    "AudioAnnotationSpan",
+    "AudioEvent",
     "AudioSampleReference",
+    "AudioSeekIndex",
     "AudioStream",
+    "AudioWaveformSummary",
     "BarChart",
     "Boxes2D",
     "Boxes3D",

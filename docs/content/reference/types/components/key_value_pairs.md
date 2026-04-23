@@ -26,4 +26,6 @@ List(non-null Struct(
 
 ## Used by
 
+* [`AudioAnnotationSpan`](../archetypes/audio_annotation_span.md?speculative-link)
+* [`AudioEvent`](../archetypes/audio_event.md?speculative-link)
 * [`McapChannel`](../archetypes/mcap_channel.md)

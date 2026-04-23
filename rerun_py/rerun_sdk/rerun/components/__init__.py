@@ -15,6 +15,12 @@ from .annotation_context import (
     AnnotationContextBatch,
     AnnotationContextLike,
 )
+from .audio_annotation_kind import (
+    AudioAnnotationKind,
+    AudioAnnotationKindArrayLike,
+    AudioAnnotationKindBatch,
+    AudioAnnotationKindLike,
+)
 from .audio_channel_count import AudioChannelCount, AudioChannelCountBatch
 from .audio_channel_layout import (
     AudioChannelLayout,
@@ -26,10 +32,12 @@ from .audio_chunk import AudioChunk, AudioChunkBatch
 from .audio_codec import AudioCodec, AudioCodecArrayLike, AudioCodecBatch, AudioCodecLike
 from .audio_discontinuity import AudioDiscontinuity, AudioDiscontinuityBatch
 from .audio_duration_samples import AudioDurationSamples, AudioDurationSamplesBatch
+from .audio_event_kind import AudioEventKind, AudioEventKindArrayLike, AudioEventKindBatch, AudioEventKindLike
 from .audio_priming_delay import AudioPrimingDelay, AudioPrimingDelayBatch
 from .audio_sample_rate import AudioSampleRate, AudioSampleRateBatch
 from .audio_seekable import AudioSeekable, AudioSeekableBatch
 from .audio_sequence_number import AudioSequenceNumber, AudioSequenceNumberBatch
+from .audio_source_id import AudioSourceId, AudioSourceIdBatch
 from .audio_stream_id import AudioStreamId, AudioStreamIdBatch
 from .audio_timestamp import AudioTimestamp, AudioTimestampBatch
 from .axis_length import AxisLength, AxisLengthBatch
@@ -145,6 +153,10 @@ __all__ = [
     "AnnotationContextArrayLike",
     "AnnotationContextBatch",
     "AnnotationContextLike",
+    "AudioAnnotationKind",
+    "AudioAnnotationKindArrayLike",
+    "AudioAnnotationKindBatch",
+    "AudioAnnotationKindLike",
     "AudioChannelCount",
     "AudioChannelCountBatch",
     "AudioChannelLayout",
@@ -161,6 +173,10 @@ __all__ = [
     "AudioDiscontinuityBatch",
     "AudioDurationSamples",
     "AudioDurationSamplesBatch",
+    "AudioEventKind",
+    "AudioEventKindArrayLike",
+    "AudioEventKindBatch",
+    "AudioEventKindLike",
     "AudioPrimingDelay",
     "AudioPrimingDelayBatch",
     "AudioSampleRate",
@@ -169,6 +185,8 @@ __all__ = [
     "AudioSeekableBatch",
     "AudioSequenceNumber",
     "AudioSequenceNumberBatch",
+    "AudioSourceId",
+    "AudioSourceIdBatch",
     "AudioStreamId",
     "AudioStreamIdBatch",
     "AudioTimestamp",

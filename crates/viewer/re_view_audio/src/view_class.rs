@@ -8,12 +8,14 @@ use re_viewer_context::{
     AudioStreamCache, IdentifiedViewSystem as _, IndicatedEntities, PerVisualizerType,
     RecommendedVisualizers, ViewClass, ViewClassRegistryError, ViewId, ViewQuery, ViewState,
     ViewStateExt as _, ViewSystemExecutionError, ViewSystemIdentifier, ViewerContext,
-    VisualizableReason, suggest_view_for_each_entity,
+    VisualizableReason,
 };
 
 use crate::playback_state::{AudioViewState, ViewTransport};
 use crate::visualizer_system::{
-    AudioStreamConfig, AudioStreamSummary, AudioStreamVisualizerSystem,
+    AudioAnnotationSpanVisualizerSystem, AudioEventVisualizerSystem, AudioLaneSummary,
+    AudioSeekIndexVisualizerSystem, AudioStreamConfig, AudioStreamSummary,
+    AudioStreamVisualizerSystem, AudioWaveformSummaryVisualizerSystem,
 };
 
 #[derive(Default)]
@@ -48,6 +50,10 @@ impl ViewClass for AudioView {
         system_registry: &mut re_viewer_context::ViewSystemRegistrator<'_>,
     ) -> Result<(), ViewClassRegistryError> {
         system_registry.register_visualizer::<AudioStreamVisualizerSystem>()?;
+        system_registry.register_visualizer::<AudioWaveformSummaryVisualizerSystem>()?;
+        system_registry.register_visualizer::<AudioSeekIndexVisualizerSystem>()?;
+        system_registry.register_visualizer::<AudioAnnotationSpanVisualizerSystem>()?;
+        system_registry.register_visualizer::<AudioEventVisualizerSystem>()?;
         Ok(())
     }
 
@@ -61,13 +67,23 @@ impl ViewClass for AudioView {
         visualizers_with_reason: &[(ViewSystemIdentifier, &VisualizableReason)],
         _indicated_entities_per_visualizer: &PerVisualizerType<&IndicatedEntities>,
     ) -> RecommendedVisualizers {
-        if visualizers_with_reason
-            .iter()
-            .any(|(viz, _)| *viz == AudioStreamVisualizerSystem::identifier())
-        {
-            RecommendedVisualizers::default(AudioStreamVisualizerSystem::identifier())
-        } else {
+        let recommended = visualizers_with_reason.iter().filter_map(|(viz, _)| {
+            [
+                AudioStreamVisualizerSystem::identifier(),
+                AudioWaveformSummaryVisualizerSystem::identifier(),
+                AudioSeekIndexVisualizerSystem::identifier(),
+                AudioAnnotationSpanVisualizerSystem::identifier(),
+                AudioEventVisualizerSystem::identifier(),
+            ]
+            .contains(viz)
+            .then_some(*viz)
+        });
+
+        let recommended: Vec<_> = recommended.collect();
+        if recommended.is_empty() {
             RecommendedVisualizers::empty()
+        } else {
+            RecommendedVisualizers::default_many(recommended)
         }
     }
 
@@ -77,7 +93,7 @@ impl ViewClass for AudioView {
         include_entity: &dyn Fn(&EntityPath) -> bool,
     ) -> re_viewer_context::ViewSpawnHeuristics {
         re_tracing::profile_function!();
-        suggest_view_for_each_entity::<AudioStreamVisualizerSystem>(ctx, include_entity)
+        suggest_audio_view_for_each_entity(ctx, include_entity)
     }
 
     fn layout_priority(&self) -> re_viewer_context::ViewClassLayoutPriority {
@@ -118,6 +134,20 @@ impl ViewClass for AudioView {
 
         let summaries = system_output.visualizer_data::<BTreeMap<EntityPath, AudioStreamSummary>>(
             AudioStreamVisualizerSystem::identifier(),
+        )?;
+        let waveform_lanes = system_output
+            .visualizer_data::<BTreeMap<EntityPath, AudioLaneSummary>>(
+                AudioWaveformSummaryVisualizerSystem::identifier(),
+            )?;
+        let seek_lanes = system_output.visualizer_data::<BTreeMap<EntityPath, AudioLaneSummary>>(
+            AudioSeekIndexVisualizerSystem::identifier(),
+        )?;
+        let annotation_lanes = system_output
+            .visualizer_data::<BTreeMap<EntityPath, AudioLaneSummary>>(
+                AudioAnnotationSpanVisualizerSystem::identifier(),
+            )?;
+        let event_lanes = system_output.visualizer_data::<BTreeMap<EntityPath, AudioLaneSummary>>(
+            AudioEventVisualizerSystem::identifier(),
         )?;
 
         let live: Vec<EntityPath> = summaries.keys().cloned().collect();
@@ -164,19 +194,69 @@ impl ViewClass for AudioView {
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            if summaries.is_empty() {
-                ui.label("No AudioStream entities in this view.");
+            if summaries.is_empty()
+                && waveform_lanes.is_empty()
+                && seek_lanes.is_empty()
+                && annotation_lanes.is_empty()
+                && event_lanes.is_empty()
+            {
+                ui.label("No audio sources, summaries, annotations, or events in this view.");
                 return;
             }
 
-            for summary in summaries.values() {
-                draw_summary(ui, summary);
-                ui.separator();
+            if !summaries.is_empty() {
+                ui.heading("Sources");
+                for summary in summaries.values() {
+                    draw_summary(ui, summary);
+                    ui.separator();
+                }
             }
+
+            draw_lane_group(ui, "Derived data", waveform_lanes);
+            draw_lane_group(ui, "Seek indexes", seek_lanes);
+            draw_lane_group(ui, "Annotation lanes", annotation_lanes);
+            draw_lane_group(ui, "Event lanes", event_lanes);
         });
 
         Ok(())
     }
+}
+
+fn suggest_audio_view_for_each_entity(
+    ctx: &ViewerContext<'_>,
+    include_entity: &dyn Fn(&EntityPath) -> bool,
+) -> re_viewer_context::ViewSpawnHeuristics {
+    use std::collections::BTreeSet;
+
+    let visualizers = [
+        AudioStreamVisualizerSystem::identifier(),
+        AudioWaveformSummaryVisualizerSystem::identifier(),
+        AudioSeekIndexVisualizerSystem::identifier(),
+        AudioAnnotationSpanVisualizerSystem::identifier(),
+        AudioEventVisualizerSystem::identifier(),
+    ];
+
+    let mut entities = BTreeSet::new();
+    for visualizer in visualizers {
+        let Some(indicated) = ctx.indicated_entities_per_visualizer.get(&visualizer) else {
+            continue;
+        };
+        let Some(visualizable) = ctx.visualizable_entities_per_visualizer.get(&visualizer) else {
+            continue;
+        };
+
+        for entity in indicated.iter() {
+            if visualizable.contains_key(entity) && include_entity(entity) {
+                entities.insert(entity.clone());
+            }
+        }
+    }
+
+    re_viewer_context::ViewSpawnHeuristics::new(
+        entities
+            .into_iter()
+            .map(re_viewer_context::RecommendedView::new_single_entity),
+    )
 }
 
 fn draw_summary(ui: &mut egui::Ui, summary: &AudioStreamSummary) {
@@ -251,4 +331,34 @@ fn draw_config(ui: &mut egui::Ui, config: &AudioStreamConfig) {
             config.sample_rate, config.channel_count
         ));
     });
+}
+
+fn draw_lane_group(ui: &mut egui::Ui, title: &str, lanes: &BTreeMap<EntityPath, AudioLaneSummary>) {
+    if lanes.is_empty() {
+        return;
+    }
+
+    ui.heading(title);
+    for lane in lanes.values() {
+        ui.strong(lane.entity_path.to_string());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(lane.kind.display_name());
+            ui.separator();
+            ui.label(format!("{} items", lane.item_count));
+            if let Some((start, end)) = lane.media_time_range_ns {
+                ui.separator();
+                ui.weak(format!(
+                    "media time: {} .. {}",
+                    format_ns(start),
+                    format_ns(end)
+                ));
+            }
+        });
+        ui.separator();
+    }
+}
+
+fn format_ns(ns: i64) -> String {
+    let seconds = ns as f64 / 1_000_000_000.0;
+    format!("{seconds:.3} s")
 }

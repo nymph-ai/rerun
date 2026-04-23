@@ -1,0 +1,57 @@
+namespace rerun.archetypes;
+
+/// Audio-aligned annotation spans.
+///
+/// Use for ASR words, utterances, speaker turns, VAD regions, TTS emissions,
+/// interruption windows, and other span-like evidence.
+///
+/// Each row stores one or more spans using parallel arrays. Spans are logged as
+/// queryable data, not private UI state, so downstream tooling can overlap-query
+/// and export them alongside audio summaries and source metadata.
+table AudioAnnotationSpan (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioAnnotationSpan",
+  "attr.rust.derive": "PartialEq"
+) {
+  // --- Required ---
+
+  /// Media-time start of each span, in nanoseconds.
+  start_time: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1000);
+
+  /// Media-time end of each span, in nanoseconds.
+  end_time: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1100);
+
+  // --- Recommended ---
+
+  /// Semantic class of each span.
+  kind: [rerun.components.AudioAnnotationKind] ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  /// Human-readable text for each span.
+  labels: [rerun.components.Text] ("attr.rerun.component_recommended", nullable, order: 2100);
+
+  /// Confidence score per span. Convention: 0 is lowest confidence, 1 is highest.
+  confidence: [rerun.components.Scalar] ("attr.rerun.component_recommended", nullable, order: 2200);
+
+  /// Speaker identity or diarization label per span.
+  speaker: [rerun.components.Text] ("attr.rerun.component_recommended", nullable, order: 2300);
+
+  // --- Optional ---
+
+  /// Stable identity of the audio source these spans refer to.
+  source_id: rerun.components.AudioSourceId ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Entity carrying the source [archetypes.AudioStream] or [archetypes.AssetAudio].
+  audio_reference: rerun.components.EntityPath ("attr.rerun.component_optional", nullable, order: 3100);
+
+  /// Optional related or parent entities, e.g. words belonging to an utterance.
+  related: [rerun.components.EntityPath] ("attr.rerun.component_optional", nullable, order: 3200);
+
+  /// Additional span metadata shared by this row.
+  metadata: rerun.components.KeyValuePairs ("attr.rerun.component_optional", nullable, order: 3300);
+
+  /// Optional display color per span.
+  colors: [rerun.components.Color] ("attr.rerun.component_optional", nullable, order: 3400);
+}

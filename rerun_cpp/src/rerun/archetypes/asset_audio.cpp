@@ -24,12 +24,19 @@ namespace rerun::archetypes {
         archetype.channel_layout =
             ComponentBatch::empty<rerun::components::AudioChannelLayout>(Descriptor_channel_layout)
                 .value_or_throw();
+        archetype.duration_samples = ComponentBatch::empty<rerun::components::AudioDurationSamples>(
+                                         Descriptor_duration_samples
+        )
+                                         .value_or_throw();
+        archetype.source_id =
+            ComponentBatch::empty<rerun::components::AudioSourceId>(Descriptor_source_id)
+                .value_or_throw();
         return archetype;
     }
 
     Collection<ComponentColumn> AssetAudio::columns(const Collection<uint32_t>& lengths_) {
         std::vector<ComponentColumn> columns;
-        columns.reserve(6);
+        columns.reserve(8);
         if (blob.has_value()) {
             columns.push_back(blob.value().partitioned(lengths_).value_or_throw());
         }
@@ -47,6 +54,12 @@ namespace rerun::archetypes {
         }
         if (channel_layout.has_value()) {
             columns.push_back(channel_layout.value().partitioned(lengths_).value_or_throw());
+        }
+        if (duration_samples.has_value()) {
+            columns.push_back(duration_samples.value().partitioned(lengths_).value_or_throw());
+        }
+        if (source_id.has_value()) {
+            columns.push_back(source_id.value().partitioned(lengths_).value_or_throw());
         }
         return columns;
     }
@@ -70,6 +83,12 @@ namespace rerun::archetypes {
         if (channel_layout.has_value()) {
             return columns(std::vector<uint32_t>(channel_layout.value().length(), 1));
         }
+        if (duration_samples.has_value()) {
+            return columns(std::vector<uint32_t>(duration_samples.value().length(), 1));
+        }
+        if (source_id.has_value()) {
+            return columns(std::vector<uint32_t>(source_id.value().length(), 1));
+        }
         return Collection<ComponentColumn>();
     }
 } // namespace rerun::archetypes
@@ -81,7 +100,7 @@ namespace rerun {
     ) {
         using namespace archetypes;
         std::vector<ComponentBatch> cells;
-        cells.reserve(6);
+        cells.reserve(8);
 
         if (archetype.blob.has_value()) {
             cells.push_back(archetype.blob.value());
@@ -100,6 +119,12 @@ namespace rerun {
         }
         if (archetype.channel_layout.has_value()) {
             cells.push_back(archetype.channel_layout.value());
+        }
+        if (archetype.duration_samples.has_value()) {
+            cells.push_back(archetype.duration_samples.value());
+        }
+        if (archetype.source_id.has_value()) {
+            cells.push_back(archetype.source_id.value());
         }
 
         return rerun::take_ownership(std::move(cells));

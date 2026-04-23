@@ -9,7 +9,9 @@
 #include "../components/audio_channel_count.hpp"
 #include "../components/audio_channel_layout.hpp"
 #include "../components/audio_codec.hpp"
+#include "../components/audio_duration_samples.hpp"
 #include "../components/audio_sample_rate.hpp"
+#include "../components/audio_source_id.hpp"
 #include "../components/blob.hpp"
 #include "../components/media_type.hpp"
 #include "../result.hpp"
@@ -60,6 +62,19 @@ namespace rerun::archetypes {
         /// Speaker arrangement for the channels.
         std::optional<ComponentBatch> channel_layout;
 
+        /// Total decoded duration, in samples per channel, if known.
+        ///
+        /// This lets the Audio View and external queries reason about the asset's
+        /// playable range without decoding the blob.
+        std::optional<ComponentBatch> duration_samples;
+
+        /// Stable identity of the logical audio source.
+        ///
+        /// This lets waveform summaries, seek indexes, annotations, and exported
+        /// clips refer to the same source even when they are logged on separate
+        /// entities or materialized in different passes.
+        std::optional<ComponentBatch> source_id;
+
       public:
         /// The name of the archetype as used in `ComponentDescriptor`s.
         static constexpr const char ArchetypeName[] = "rerun.archetypes.AssetAudio";
@@ -92,6 +107,16 @@ namespace rerun::archetypes {
         static constexpr auto Descriptor_channel_layout = ComponentDescriptor(
             ArchetypeName, "AssetAudio:channel_layout",
             Loggable<rerun::components::AudioChannelLayout>::ComponentType
+        );
+        /// `ComponentDescriptor` for the `duration_samples` field.
+        static constexpr auto Descriptor_duration_samples = ComponentDescriptor(
+            ArchetypeName, "AssetAudio:duration_samples",
+            Loggable<rerun::components::AudioDurationSamples>::ComponentType
+        );
+        /// `ComponentDescriptor` for the `source_id` field.
+        static constexpr auto Descriptor_source_id = ComponentDescriptor(
+            ArchetypeName, "AssetAudio:source_id",
+            Loggable<rerun::components::AudioSourceId>::ComponentType
         );
 
       public:
@@ -225,6 +250,55 @@ namespace rerun::archetypes {
             channel_layout =
                 ComponentBatch::from_loggable(_channel_layout, Descriptor_channel_layout)
                     .value_or_throw();
+            return std::move(*this);
+        }
+
+        /// Total decoded duration, in samples per channel, if known.
+        ///
+        /// This lets the Audio View and external queries reason about the asset's
+        /// playable range without decoding the blob.
+        AssetAudio with_duration_samples(
+            const rerun::components::AudioDurationSamples& _duration_samples
+        ) && {
+            duration_samples =
+                ComponentBatch::from_loggable(_duration_samples, Descriptor_duration_samples)
+                    .value_or_throw();
+            return std::move(*this);
+        }
+
+        /// This method makes it possible to pack multiple `duration_samples` in a single component batch.
+        ///
+        /// This only makes sense when used in conjunction with `columns`. `with_duration_samples` should
+        /// be used when logging a single row's worth of data.
+        AssetAudio with_many_duration_samples(
+            const Collection<rerun::components::AudioDurationSamples>& _duration_samples
+        ) && {
+            duration_samples =
+                ComponentBatch::from_loggable(_duration_samples, Descriptor_duration_samples)
+                    .value_or_throw();
+            return std::move(*this);
+        }
+
+        /// Stable identity of the logical audio source.
+        ///
+        /// This lets waveform summaries, seek indexes, annotations, and exported
+        /// clips refer to the same source even when they are logged on separate
+        /// entities or materialized in different passes.
+        AssetAudio with_source_id(const rerun::components::AudioSourceId& _source_id) && {
+            source_id =
+                ComponentBatch::from_loggable(_source_id, Descriptor_source_id).value_or_throw();
+            return std::move(*this);
+        }
+
+        /// This method makes it possible to pack multiple `source_id` in a single component batch.
+        ///
+        /// This only makes sense when used in conjunction with `columns`. `with_source_id` should
+        /// be used when logging a single row's worth of data.
+        AssetAudio with_many_source_id(
+            const Collection<rerun::components::AudioSourceId>& _source_id
+        ) && {
+            source_id =
+                ComponentBatch::from_loggable(_source_id, Descriptor_source_id).value_or_throw();
             return std::move(*this);
         }
 

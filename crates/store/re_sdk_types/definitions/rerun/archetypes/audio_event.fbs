@@ -1,0 +1,49 @@
+namespace rerun.archetypes;
+
+/// Audio-aligned point events.
+///
+/// Use for decoder resets, ASR finalization, diarization switches, endpoint
+/// commits, barge-in detection, agent state transitions, and latency markers.
+///
+/// Each row stores one or more events using parallel arrays. The row timestamp
+/// can still carry the event on a Rerun timeline; `event_time` records the
+/// source media time so events remain useful for complete audio assets and
+/// exported clips.
+table AudioEvent (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioEvent",
+  "attr.rust.derive": "PartialEq"
+) {
+  // --- Required ---
+
+  /// Media-time timestamp of each event, in nanoseconds.
+  event_time: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1000);
+
+  /// Semantic class of each event.
+  kind: [rerun.components.AudioEventKind] ("attr.rerun.component_required", order: 1100);
+
+  // --- Recommended ---
+
+  /// Human-readable event label.
+  labels: [rerun.components.Text] ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  // --- Optional ---
+
+  /// Stable identity of the audio source these events refer to.
+  source_id: rerun.components.AudioSourceId ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Entity carrying the source [archetypes.AudioStream] or [archetypes.AssetAudio].
+  audio_reference: rerun.components.EntityPath ("attr.rerun.component_optional", nullable, order: 3100);
+
+  /// Optional related entities, such as the span or model response that emitted the event.
+  related: [rerun.components.EntityPath] ("attr.rerun.component_optional", nullable, order: 3200);
+
+  /// Additional event metadata shared by this row.
+  payload: rerun.components.KeyValuePairs ("attr.rerun.component_optional", nullable, order: 3300);
+
+  /// Optional display color per event.
+  colors: [rerun.components.Color] ("attr.rerun.component_optional", nullable, order: 3400);
+}

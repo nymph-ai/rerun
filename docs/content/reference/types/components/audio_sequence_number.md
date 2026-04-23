@@ -27,4 +27,5 @@ UInt64
 
 ## Used by
 
+* [`AudioSeekIndex`](../archetypes/audio_seek_index.md?speculative-link)
 * [`AudioStream`](../archetypes/audio_stream.md?speculative-link)

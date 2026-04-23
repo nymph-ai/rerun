@@ -21,6 +21,10 @@ own clock.
 ## Visualized archetypes
 
 * [`AssetAudio`](../archetypes/asset_audio.md)
+* [`AudioAnnotationSpan`](../archetypes/audio_annotation_span.md)
+* [`AudioEvent`](../archetypes/audio_event.md)
 * [`AudioSampleReference`](../archetypes/audio_sample_reference.md)
+* [`AudioSeekIndex`](../archetypes/audio_seek_index.md)
 * [`AudioStream`](../archetypes/audio_stream.md)
+* [`AudioWaveformSummary`](../archetypes/audio_waveform_summary.md)
 

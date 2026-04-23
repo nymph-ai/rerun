@@ -128,6 +128,7 @@ class AudioStream(Archetype, VisualizableArchetype):
         sequence_number: datatypes.UInt64Like | None = None,
         discontinuity: datatypes.BoolLike | None = None,
         seekable: datatypes.BoolLike | None = None,
+        source_id: datatypes.Utf8Like | None = None,
     ) -> None:
         """
         Create a new instance of the AudioStream archetype.
@@ -169,6 +170,12 @@ class AudioStream(Archetype, VisualizableArchetype):
 
             Defaults to `true` for Opus; codecs with inter-frame dependencies may
             set it false on non-key segments.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -186,6 +193,7 @@ class AudioStream(Archetype, VisualizableArchetype):
                 sequence_number=sequence_number,
                 discontinuity=discontinuity,
                 seekable=seekable,
+                source_id=source_id,
             )
             return
         self.__attrs_clear__()
@@ -204,6 +212,7 @@ class AudioStream(Archetype, VisualizableArchetype):
             sequence_number=None,
             discontinuity=None,
             seekable=None,
+            source_id=None,
         )
 
     @classmethod
@@ -229,6 +238,7 @@ class AudioStream(Archetype, VisualizableArchetype):
         sequence_number: datatypes.UInt64Like | None = None,
         discontinuity: datatypes.BoolLike | None = None,
         seekable: datatypes.BoolLike | None = None,
+        source_id: datatypes.Utf8Like | None = None,
     ) -> AudioStream:
         """
         Update only some specific fields of a `AudioStream`.
@@ -272,6 +282,12 @@ class AudioStream(Archetype, VisualizableArchetype):
 
             Defaults to `true` for Opus; codecs with inter-frame dependencies may
             set it false on non-key segments.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -289,6 +305,7 @@ class AudioStream(Archetype, VisualizableArchetype):
                 "sequence_number": sequence_number,
                 "discontinuity": discontinuity,
                 "seekable": seekable,
+                "source_id": source_id,
             }
 
             if clear_unset:
@@ -393,6 +410,14 @@ class AudioStream(Archetype, VisualizableArchetype):
             component_type=components.AudioSeekableBatch._COMPONENT_TYPE,
         )
 
+    @staticmethod
+    def descriptor_source_id() -> ComponentDescriptor:
+        return ComponentDescriptor(
+            "AudioStream:source_id",
+            archetype=AudioStream.NAME,
+            component_type=components.AudioSourceIdBatch._COMPONENT_TYPE,
+        )
+
     @classmethod
     def columns(
         cls,
@@ -408,6 +433,7 @@ class AudioStream(Archetype, VisualizableArchetype):
         sequence_number: datatypes.UInt64ArrayLike | None = None,
         discontinuity: datatypes.BoolArrayLike | None = None,
         seekable: datatypes.BoolArrayLike | None = None,
+        source_id: datatypes.Utf8ArrayLike | None = None,
     ) -> ComponentColumnList:
         """
         Construct a new column-oriented component bundle.
@@ -454,6 +480,12 @@ class AudioStream(Archetype, VisualizableArchetype):
 
             Defaults to `true` for Opus; codecs with inter-frame dependencies may
             set it false on non-key segments.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -471,6 +503,7 @@ class AudioStream(Archetype, VisualizableArchetype):
                 sequence_number=sequence_number,
                 discontinuity=discontinuity,
                 seekable=seekable,
+                source_id=source_id,
             )
 
         batches = inst.as_component_batches()
@@ -489,6 +522,7 @@ class AudioStream(Archetype, VisualizableArchetype):
             "AudioStream:sequence_number": sequence_number,
             "AudioStream:discontinuity": discontinuity,
             "AudioStream:seekable": seekable,
+            "AudioStream:source_id": source_id,
         }
         columns = []
 
@@ -632,6 +666,19 @@ class AudioStream(Archetype, VisualizableArchetype):
     #
     # Defaults to `true` for Opus; codecs with inter-frame dependencies may
     # set it false on non-key segments.
+    #
+    # (Docstring intentionally commented out to hide this field from the docs)
+
+    source_id: components.AudioSourceIdBatch | None = field(
+        metadata={"component": True},
+        default=None,
+        converter=components.AudioSourceIdBatch._converter,  # type: ignore[misc]
+    )
+    # Stable identity of the logical audio source.
+    #
+    # This lets waveform summaries, seek indexes, annotations, and exported
+    # clips refer to the same source even when they are logged on separate
+    # entities or materialized in different passes.
     #
     # (Docstring intentionally commented out to hide this field from the docs)
 

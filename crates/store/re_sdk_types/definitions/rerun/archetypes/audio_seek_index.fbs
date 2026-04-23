@@ -1,0 +1,46 @@
+namespace rerun.archetypes;
+
+/// Materialized seek index for an audio source.
+///
+/// Each row stores one batch of entries. The `media_time`, `decode_time`, and
+/// `trim_samples` arrays are parallel arrays. A playback runtime resolves a
+/// requested media time by choosing the nearest preceding `decode_time`,
+/// decoding forward, then trimming `trim_samples` samples from the decoded PCM.
+table AudioSeekIndex (
+  "attr.docs.category": "Audio",
+  "attr.docs.unreleased",
+  "attr.docs.view_types": "AudioView",
+  "attr.rerun.state": "unstable",
+  "attr.rerun.visualizer": "AudioSeekIndex",
+  "attr.rust.derive": "PartialEq"
+) {
+  // --- Required ---
+
+  /// Media time that this index entry accelerates.
+  media_time: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1000);
+
+  /// Nearest preceding decoder reset / key / seekable boundary.
+  decode_time: [rerun.components.AudioTimestamp] ("attr.rerun.component_required", order: 1100);
+
+  /// Number of samples per channel to discard after decoding from `decode_time`.
+  trim_samples: [rerun.components.AudioDurationSamples] ("attr.rerun.component_required", order: 1200);
+
+  // --- Recommended ---
+
+  /// Sequence number of the segment containing `decode_time`, if known.
+  sequence_number: [rerun.components.AudioSequenceNumber] ("attr.rerun.component_recommended", nullable, order: 2000);
+
+  /// Whether the entry crosses or starts at a discontinuity.
+  discontinuity: [rerun.components.AudioDiscontinuity] ("attr.rerun.component_recommended", nullable, order: 2100);
+
+  // --- Optional ---
+
+  /// Stable identity of the audio source this index was derived from.
+  source_id: rerun.components.AudioSourceId ("attr.rerun.component_optional", nullable, order: 3000);
+
+  /// Entity carrying the source [archetypes.AudioStream] or [archetypes.AssetAudio].
+  audio_reference: rerun.components.EntityPath ("attr.rerun.component_optional", nullable, order: 3100);
+
+  /// Continuity stream id associated with this index batch.
+  stream_id: rerun.components.AudioStreamId ("attr.rerun.component_optional", nullable, order: 3200);
+}

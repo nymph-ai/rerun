@@ -13,8 +13,12 @@ This page lists all built-in archetypes.
 ## Audio
 
 * [`AssetAudio`](archetypes/asset_audio.md): A complete audio asset.
+* [`AudioAnnotationSpan`](archetypes/audio_annotation_span.md): Audio-aligned annotation spans.
+* [`AudioEvent`](archetypes/audio_event.md): Audio-aligned point events.
 * [`AudioSampleReference`](archetypes/audio_sample_reference.md): References a single position inside an [`archetypes.AssetAudio`](https://rerun.io/docs/reference/types/archetypes/asset_audio?speculative-link).
+* [`AudioSeekIndex`](archetypes/audio_seek_index.md): Materialized seek index for an audio source.
 * [`AudioStream`](archetypes/audio_stream.md): A time-evolving stream of encoded audio chunks.
+* [`AudioWaveformSummary`](archetypes/audio_waveform_summary.md): Multi-resolution waveform summary buckets for an audio source.
 
 ## Geospatial
 

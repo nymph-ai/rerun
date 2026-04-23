@@ -48,4 +48,17 @@ table AssetAudio (
 
   /// Speaker arrangement for the channels.
   channel_layout: rerun.components.AudioChannelLayout ("attr.rerun.component_optional", nullable, order: 3300);
+
+  /// Total decoded duration, in samples per channel, if known.
+  ///
+  /// This lets the Audio View and external queries reason about the asset's
+  /// playable range without decoding the blob.
+  duration_samples: rerun.components.AudioDurationSamples ("attr.rerun.component_optional", nullable, order: 3400);
+
+  /// Stable identity of the logical audio source.
+  ///
+  /// This lets waveform summaries, seek indexes, annotations, and exported
+  /// clips refer to the same source even when they are logged on separate
+  /// entities or materialized in different passes.
+  source_id: rerun.components.AudioSourceId ("attr.rerun.component_optional", nullable, order: 3500);
 }

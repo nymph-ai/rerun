@@ -85,6 +85,13 @@ pub struct AudioStream {
     /// Defaults to `true` for Opus; codecs with inter-frame dependencies may
     /// set it false on non-key segments.
     pub seekable: Option<SerializedComponentBatch>,
+
+    /// Stable identity of the logical audio source.
+    ///
+    /// This lets waveform summaries, seek indexes, annotations, and exported
+    /// clips refer to the same source even when they are logged on separate
+    /// entities or materialized in different passes.
+    pub source_id: Option<SerializedComponentBatch>,
 }
 
 impl AudioStream {
@@ -219,6 +226,18 @@ impl AudioStream {
             component_type: Some("rerun.components.AudioSeekable".into()),
         }
     }
+
+    /// Returns the [`ComponentDescriptor`] for [`Self::source_id`].
+    ///
+    /// The corresponding component is [`crate::components::AudioSourceId`].
+    #[inline]
+    pub fn descriptor_source_id() -> ComponentDescriptor {
+        ComponentDescriptor {
+            archetype: Some("rerun.archetypes.AudioStream".into()),
+            component: "AudioStream:source_id".into(),
+            component_type: Some("rerun.components.AudioSourceId".into()),
+        }
+    }
 }
 
 static REQUIRED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 3usize]> =
@@ -238,7 +257,7 @@ static RECOMMENDED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 2usize]
         ]
     });
 
-static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 6usize]> =
+static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 7usize]> =
     std::sync::LazyLock::new(|| {
         [
             AudioStream::descriptor_channel_layout(),
@@ -247,10 +266,11 @@ static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 6usize]> =
             AudioStream::descriptor_sequence_number(),
             AudioStream::descriptor_discontinuity(),
             AudioStream::descriptor_seekable(),
+            AudioStream::descriptor_source_id(),
         ]
     });
 
-static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 11usize]> =
+static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 12usize]> =
     std::sync::LazyLock::new(|| {
         [
             AudioStream::descriptor_codec(),
@@ -264,12 +284,13 @@ static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 11usize]> =
             AudioStream::descriptor_sequence_number(),
             AudioStream::descriptor_discontinuity(),
             AudioStream::descriptor_seekable(),
+            AudioStream::descriptor_source_id(),
         ]
     });
 
 impl AudioStream {
-    /// The total number of components in the archetype: 3 required, 2 recommended, 6 optional
-    pub const NUM_COMPONENTS: usize = 11usize;
+    /// The total number of components in the archetype: 3 required, 2 recommended, 7 optional
+    pub const NUM_COMPONENTS: usize = 12usize;
 }
 
 impl ::re_types_core::Archetype for AudioStream {
@@ -359,6 +380,11 @@ impl ::re_types_core::Archetype for AudioStream {
         let seekable = arrays_by_descr
             .get(&Self::descriptor_seekable())
             .map(|array| SerializedComponentBatch::new(array.clone(), Self::descriptor_seekable()));
+        let source_id = arrays_by_descr
+            .get(&Self::descriptor_source_id())
+            .map(|array| {
+                SerializedComponentBatch::new(array.clone(), Self::descriptor_source_id())
+            });
         Ok(Self {
             codec,
             sample_rate,
@@ -371,6 +397,7 @@ impl ::re_types_core::Archetype for AudioStream {
             sequence_number,
             discontinuity,
             seekable,
+            source_id,
         })
     }
 }
@@ -391,6 +418,7 @@ impl ::re_types_core::AsComponents for AudioStream {
             self.sequence_number.clone(),
             self.discontinuity.clone(),
             self.seekable.clone(),
+            self.source_id.clone(),
         ]
         .into_iter()
         .flatten()
@@ -427,6 +455,7 @@ impl AudioStream {
             sequence_number: None,
             discontinuity: None,
             seekable: None,
+            source_id: None,
         }
     }
 
@@ -485,6 +514,10 @@ impl AudioStream {
                 crate::components::AudioSeekable::arrow_empty(),
                 Self::descriptor_seekable(),
             )),
+            source_id: Some(SerializedComponentBatch::new(
+                crate::components::AudioSourceId::arrow_empty(),
+                Self::descriptor_source_id(),
+            )),
         }
     }
 
@@ -540,6 +573,9 @@ impl AudioStream {
             self.seekable
                 .map(|seekable| seekable.partitioned(_lengths.clone()))
                 .transpose()?,
+            self.source_id
+                .map(|source_id| source_id.partitioned(_lengths.clone()))
+                .transpose()?,
         ];
         Ok(columns.into_iter().flatten())
     }
@@ -563,6 +599,7 @@ impl AudioStream {
         let len_sequence_number = self.sequence_number.as_ref().map(|b| b.array.len());
         let len_discontinuity = self.discontinuity.as_ref().map(|b| b.array.len());
         let len_seekable = self.seekable.as_ref().map(|b| b.array.len());
+        let len_source_id = self.source_id.as_ref().map(|b| b.array.len());
         let len = None
             .or(len_codec)
             .or(len_sample_rate)
@@ -575,6 +612,7 @@ impl AudioStream {
             .or(len_sequence_number)
             .or(len_discontinuity)
             .or(len_seekable)
+            .or(len_source_id)
             .unwrap_or(0);
         self.columns(std::iter::repeat_n(1, len))
     }
@@ -841,6 +879,33 @@ impl AudioStream {
         self.seekable = try_serialize_field(Self::descriptor_seekable(), seekable);
         self
     }
+
+    /// Stable identity of the logical audio source.
+    ///
+    /// This lets waveform summaries, seek indexes, annotations, and exported
+    /// clips refer to the same source even when they are logged on separate
+    /// entities or materialized in different passes.
+    #[inline]
+    pub fn with_source_id(
+        mut self,
+        source_id: impl Into<crate::components::AudioSourceId>,
+    ) -> Self {
+        self.source_id = try_serialize_field(Self::descriptor_source_id(), [source_id]);
+        self
+    }
+
+    /// This method makes it possible to pack multiple [`crate::components::AudioSourceId`] in a single component batch.
+    ///
+    /// This only makes sense when used in conjunction with [`Self::columns`]. [`Self::with_source_id`] should
+    /// be used when logging a single row's worth of data.
+    #[inline]
+    pub fn with_many_source_id(
+        mut self,
+        source_id: impl IntoIterator<Item = impl Into<crate::components::AudioSourceId>>,
+    ) -> Self {
+        self.source_id = try_serialize_field(Self::descriptor_source_id(), source_id);
+        self
+    }
 }
 
 impl ::re_byte_size::SizeBytes for AudioStream {
@@ -857,5 +922,6 @@ impl ::re_byte_size::SizeBytes for AudioStream {
             + self.sequence_number.heap_size_bytes()
             + self.discontinuity.heap_size_bytes()
             + self.seekable.heap_size_bytes()
+            + self.source_id.heap_size_bytes()
     }
 }

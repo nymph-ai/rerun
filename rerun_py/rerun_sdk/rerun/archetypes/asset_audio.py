@@ -52,6 +52,8 @@ class AssetAudio(Archetype):
         sample_rate: datatypes.UInt32Like | None = None,
         channel_count: datatypes.UInt16Like | None = None,
         channel_layout: components.AudioChannelLayoutLike | None = None,
+        duration_samples: datatypes.UInt64Like | None = None,
+        source_id: datatypes.Utf8Like | None = None,
     ) -> None:
         """
         Create a new instance of the AssetAudio archetype.
@@ -76,6 +78,17 @@ class AssetAudio(Archetype):
             Decoded channel count.
         channel_layout:
             Speaker arrangement for the channels.
+        duration_samples:
+            Total decoded duration, in samples per channel, if known.
+
+            This lets the Audio View and external queries reason about the asset's
+            playable range without decoding the blob.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -88,6 +101,8 @@ class AssetAudio(Archetype):
                 sample_rate=sample_rate,
                 channel_count=channel_count,
                 channel_layout=channel_layout,
+                duration_samples=duration_samples,
+                source_id=source_id,
             )
             return
         self.__attrs_clear__()
@@ -101,6 +116,8 @@ class AssetAudio(Archetype):
             sample_rate=None,
             channel_count=None,
             channel_layout=None,
+            duration_samples=None,
+            source_id=None,
         )
 
     @classmethod
@@ -121,6 +138,8 @@ class AssetAudio(Archetype):
         sample_rate: datatypes.UInt32Like | None = None,
         channel_count: datatypes.UInt16Like | None = None,
         channel_layout: components.AudioChannelLayoutLike | None = None,
+        duration_samples: datatypes.UInt64Like | None = None,
+        source_id: datatypes.Utf8Like | None = None,
     ) -> AssetAudio:
         """
         Update only some specific fields of a `AssetAudio`.
@@ -147,6 +166,17 @@ class AssetAudio(Archetype):
             Decoded channel count.
         channel_layout:
             Speaker arrangement for the channels.
+        duration_samples:
+            Total decoded duration, in samples per channel, if known.
+
+            This lets the Audio View and external queries reason about the asset's
+            playable range without decoding the blob.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -159,6 +189,8 @@ class AssetAudio(Archetype):
                 "sample_rate": sample_rate,
                 "channel_count": channel_count,
                 "channel_layout": channel_layout,
+                "duration_samples": duration_samples,
+                "source_id": source_id,
             }
 
             if clear_unset:
@@ -223,6 +255,22 @@ class AssetAudio(Archetype):
             component_type=components.AudioChannelLayoutBatch._COMPONENT_TYPE,
         )
 
+    @staticmethod
+    def descriptor_duration_samples() -> ComponentDescriptor:
+        return ComponentDescriptor(
+            "AssetAudio:duration_samples",
+            archetype=AssetAudio.NAME,
+            component_type=components.AudioDurationSamplesBatch._COMPONENT_TYPE,
+        )
+
+    @staticmethod
+    def descriptor_source_id() -> ComponentDescriptor:
+        return ComponentDescriptor(
+            "AssetAudio:source_id",
+            archetype=AssetAudio.NAME,
+            component_type=components.AudioSourceIdBatch._COMPONENT_TYPE,
+        )
+
     @classmethod
     def columns(
         cls,
@@ -233,6 +281,8 @@ class AssetAudio(Archetype):
         sample_rate: datatypes.UInt32ArrayLike | None = None,
         channel_count: datatypes.UInt16ArrayLike | None = None,
         channel_layout: components.AudioChannelLayoutArrayLike | None = None,
+        duration_samples: datatypes.UInt64ArrayLike | None = None,
+        source_id: datatypes.Utf8ArrayLike | None = None,
     ) -> ComponentColumnList:
         """
         Construct a new column-oriented component bundle.
@@ -262,6 +312,17 @@ class AssetAudio(Archetype):
             Decoded channel count.
         channel_layout:
             Speaker arrangement for the channels.
+        duration_samples:
+            Total decoded duration, in samples per channel, if known.
+
+            This lets the Audio View and external queries reason about the asset's
+            playable range without decoding the blob.
+        source_id:
+            Stable identity of the logical audio source.
+
+            This lets waveform summaries, seek indexes, annotations, and exported
+            clips refer to the same source even when they are logged on separate
+            entities or materialized in different passes.
 
         """
 
@@ -274,6 +335,8 @@ class AssetAudio(Archetype):
                 sample_rate=sample_rate,
                 channel_count=channel_count,
                 channel_layout=channel_layout,
+                duration_samples=duration_samples,
+                source_id=source_id,
             )
 
         batches = inst.as_component_batches()
@@ -287,6 +350,8 @@ class AssetAudio(Archetype):
             "AssetAudio:sample_rate": sample_rate,
             "AssetAudio:channel_count": channel_count,
             "AssetAudio:channel_layout": channel_layout,
+            "AssetAudio:duration_samples": duration_samples,
+            "AssetAudio:source_id": source_id,
         }
         columns = []
 
@@ -378,6 +443,31 @@ class AssetAudio(Archetype):
         converter=components.AudioChannelLayoutBatch._converter,  # type: ignore[misc]
     )
     # Speaker arrangement for the channels.
+    #
+    # (Docstring intentionally commented out to hide this field from the docs)
+
+    duration_samples: components.AudioDurationSamplesBatch | None = field(
+        metadata={"component": True},
+        default=None,
+        converter=components.AudioDurationSamplesBatch._converter,  # type: ignore[misc]
+    )
+    # Total decoded duration, in samples per channel, if known.
+    #
+    # This lets the Audio View and external queries reason about the asset's
+    # playable range without decoding the blob.
+    #
+    # (Docstring intentionally commented out to hide this field from the docs)
+
+    source_id: components.AudioSourceIdBatch | None = field(
+        metadata={"component": True},
+        default=None,
+        converter=components.AudioSourceIdBatch._converter,  # type: ignore[misc]
+    )
+    # Stable identity of the logical audio source.
+    #
+    # This lets waveform summaries, seek indexes, annotations, and exported
+    # clips refer to the same source even when they are logged on separate
+    # entities or materialized in different passes.
     #
     # (Docstring intentionally commented out to hide this field from the docs)
 

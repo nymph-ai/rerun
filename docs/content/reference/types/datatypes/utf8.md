@@ -20,6 +20,7 @@ Utf8
 ## Used by
 
 * [`AnnotationInfo`](../datatypes/annotation_info.md)
+* [`AudioSourceId`](../components/audio_source_id.md?speculative-link)
 * [`GraphNode`](../components/graph_node.md)
 * [`MediaType`](../components/media_type.md)
 * [`Name`](../components/name.md)

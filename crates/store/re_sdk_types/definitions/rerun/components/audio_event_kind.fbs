@@ -1,0 +1,41 @@
+namespace rerun.components;
+
+/// Semantic class of an audio-aligned point event.
+///
+/// Point events are used for instantaneous state changes and milestones that
+/// should be inspectable on the same timeline as audio, waveform summaries, and
+/// annotation spans.
+enum AudioEventKind: ubyte (
+  "attr.docs.unreleased",
+  "attr.rerun.state": "unstable"
+) {
+  /// Invalid value. Won't show up in generated types.
+  Invalid = 0,
+
+  /// Decoder reset or reconfiguration.
+  DecoderReset = 1,
+
+  /// ASR segment finalized.
+  AsrFinalized = 2,
+
+  /// Diarization speaker changed.
+  DiarizationSwitch = 3,
+
+  /// Barge-in or interruption detected.
+  BargeIn = 4,
+
+  /// Endpointing decision committed.
+  EndpointCommit = 5,
+
+  /// Agent/model state transition.
+  AgentStateTransition = 6,
+
+  /// Turn-taking policy changed.
+  TurnPolicyChange = 7,
+
+  /// Latency milestone or timing marker.
+  LatencyMilestone = 8,
+
+  /// Source discontinuity, stream hole, or timestamp jump.
+  Discontinuity = 9,
+}

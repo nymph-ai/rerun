@@ -60,6 +60,19 @@ pub struct AssetAudio {
 
     /// Speaker arrangement for the channels.
     pub channel_layout: Option<SerializedComponentBatch>,
+
+    /// Total decoded duration, in samples per channel, if known.
+    ///
+    /// This lets the Audio View and external queries reason about the asset's
+    /// playable range without decoding the blob.
+    pub duration_samples: Option<SerializedComponentBatch>,
+
+    /// Stable identity of the logical audio source.
+    ///
+    /// This lets waveform summaries, seek indexes, annotations, and exported
+    /// clips refer to the same source even when they are logged on separate
+    /// entities or materialized in different passes.
+    pub source_id: Option<SerializedComponentBatch>,
 }
 
 impl AssetAudio {
@@ -134,6 +147,30 @@ impl AssetAudio {
             component_type: Some("rerun.components.AudioChannelLayout".into()),
         }
     }
+
+    /// Returns the [`ComponentDescriptor`] for [`Self::duration_samples`].
+    ///
+    /// The corresponding component is [`crate::components::AudioDurationSamples`].
+    #[inline]
+    pub fn descriptor_duration_samples() -> ComponentDescriptor {
+        ComponentDescriptor {
+            archetype: Some("rerun.archetypes.AssetAudio".into()),
+            component: "AssetAudio:duration_samples".into(),
+            component_type: Some("rerun.components.AudioDurationSamples".into()),
+        }
+    }
+
+    /// Returns the [`ComponentDescriptor`] for [`Self::source_id`].
+    ///
+    /// The corresponding component is [`crate::components::AudioSourceId`].
+    #[inline]
+    pub fn descriptor_source_id() -> ComponentDescriptor {
+        ComponentDescriptor {
+            archetype: Some("rerun.archetypes.AssetAudio".into()),
+            component: "AssetAudio:source_id".into(),
+            component_type: Some("rerun.components.AudioSourceId".into()),
+        }
+    }
 }
 
 static REQUIRED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 1usize]> =
@@ -142,17 +179,19 @@ static REQUIRED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 1usize]> =
 static RECOMMENDED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 1usize]> =
     std::sync::LazyLock::new(|| [AssetAudio::descriptor_media_type()]);
 
-static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 4usize]> =
+static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 6usize]> =
     std::sync::LazyLock::new(|| {
         [
             AssetAudio::descriptor_codec(),
             AssetAudio::descriptor_sample_rate(),
             AssetAudio::descriptor_channel_count(),
             AssetAudio::descriptor_channel_layout(),
+            AssetAudio::descriptor_duration_samples(),
+            AssetAudio::descriptor_source_id(),
         ]
     });
 
-static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 6usize]> =
+static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 8usize]> =
     std::sync::LazyLock::new(|| {
         [
             AssetAudio::descriptor_blob(),
@@ -161,12 +200,14 @@ static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 6usize]> =
             AssetAudio::descriptor_sample_rate(),
             AssetAudio::descriptor_channel_count(),
             AssetAudio::descriptor_channel_layout(),
+            AssetAudio::descriptor_duration_samples(),
+            AssetAudio::descriptor_source_id(),
         ]
     });
 
 impl AssetAudio {
-    /// The total number of components in the archetype: 1 required, 1 recommended, 4 optional
-    pub const NUM_COMPONENTS: usize = 6usize;
+    /// The total number of components in the archetype: 1 required, 1 recommended, 6 optional
+    pub const NUM_COMPONENTS: usize = 8usize;
 }
 
 impl ::re_types_core::Archetype for AssetAudio {
@@ -233,6 +274,16 @@ impl ::re_types_core::Archetype for AssetAudio {
             .map(|array| {
                 SerializedComponentBatch::new(array.clone(), Self::descriptor_channel_layout())
             });
+        let duration_samples = arrays_by_descr
+            .get(&Self::descriptor_duration_samples())
+            .map(|array| {
+                SerializedComponentBatch::new(array.clone(), Self::descriptor_duration_samples())
+            });
+        let source_id = arrays_by_descr
+            .get(&Self::descriptor_source_id())
+            .map(|array| {
+                SerializedComponentBatch::new(array.clone(), Self::descriptor_source_id())
+            });
         Ok(Self {
             blob,
             media_type,
@@ -240,6 +291,8 @@ impl ::re_types_core::Archetype for AssetAudio {
             sample_rate,
             channel_count,
             channel_layout,
+            duration_samples,
+            source_id,
         })
     }
 }
@@ -255,6 +308,8 @@ impl ::re_types_core::AsComponents for AssetAudio {
             self.sample_rate.clone(),
             self.channel_count.clone(),
             self.channel_layout.clone(),
+            self.duration_samples.clone(),
+            self.source_id.clone(),
         ]
         .into_iter()
         .flatten()
@@ -275,6 +330,8 @@ impl AssetAudio {
             sample_rate: None,
             channel_count: None,
             channel_layout: None,
+            duration_samples: None,
+            source_id: None,
         }
     }
 
@@ -312,6 +369,14 @@ impl AssetAudio {
             channel_layout: Some(SerializedComponentBatch::new(
                 crate::components::AudioChannelLayout::arrow_empty(),
                 Self::descriptor_channel_layout(),
+            )),
+            duration_samples: Some(SerializedComponentBatch::new(
+                crate::components::AudioDurationSamples::arrow_empty(),
+                Self::descriptor_duration_samples(),
+            )),
+            source_id: Some(SerializedComponentBatch::new(
+                crate::components::AudioSourceId::arrow_empty(),
+                Self::descriptor_source_id(),
             )),
         }
     }
@@ -353,6 +418,12 @@ impl AssetAudio {
             self.channel_layout
                 .map(|channel_layout| channel_layout.partitioned(_lengths.clone()))
                 .transpose()?,
+            self.duration_samples
+                .map(|duration_samples| duration_samples.partitioned(_lengths.clone()))
+                .transpose()?,
+            self.source_id
+                .map(|source_id| source_id.partitioned(_lengths.clone()))
+                .transpose()?,
         ];
         Ok(columns.into_iter().flatten())
     }
@@ -371,6 +442,8 @@ impl AssetAudio {
         let len_sample_rate = self.sample_rate.as_ref().map(|b| b.array.len());
         let len_channel_count = self.channel_count.as_ref().map(|b| b.array.len());
         let len_channel_layout = self.channel_layout.as_ref().map(|b| b.array.len());
+        let len_duration_samples = self.duration_samples.as_ref().map(|b| b.array.len());
+        let len_source_id = self.source_id.as_ref().map(|b| b.array.len());
         let len = None
             .or(len_blob)
             .or(len_media_type)
@@ -378,6 +451,8 @@ impl AssetAudio {
             .or(len_sample_rate)
             .or(len_channel_count)
             .or(len_channel_layout)
+            .or(len_duration_samples)
+            .or(len_source_id)
             .unwrap_or(0);
         self.columns(std::iter::repeat_n(1, len))
     }
@@ -518,6 +593,61 @@ impl AssetAudio {
             try_serialize_field(Self::descriptor_channel_layout(), channel_layout);
         self
     }
+
+    /// Total decoded duration, in samples per channel, if known.
+    ///
+    /// This lets the Audio View and external queries reason about the asset's
+    /// playable range without decoding the blob.
+    #[inline]
+    pub fn with_duration_samples(
+        mut self,
+        duration_samples: impl Into<crate::components::AudioDurationSamples>,
+    ) -> Self {
+        self.duration_samples =
+            try_serialize_field(Self::descriptor_duration_samples(), [duration_samples]);
+        self
+    }
+
+    /// This method makes it possible to pack multiple [`crate::components::AudioDurationSamples`] in a single component batch.
+    ///
+    /// This only makes sense when used in conjunction with [`Self::columns`]. [`Self::with_duration_samples`] should
+    /// be used when logging a single row's worth of data.
+    #[inline]
+    pub fn with_many_duration_samples(
+        mut self,
+        duration_samples: impl IntoIterator<Item = impl Into<crate::components::AudioDurationSamples>>,
+    ) -> Self {
+        self.duration_samples =
+            try_serialize_field(Self::descriptor_duration_samples(), duration_samples);
+        self
+    }
+
+    /// Stable identity of the logical audio source.
+    ///
+    /// This lets waveform summaries, seek indexes, annotations, and exported
+    /// clips refer to the same source even when they are logged on separate
+    /// entities or materialized in different passes.
+    #[inline]
+    pub fn with_source_id(
+        mut self,
+        source_id: impl Into<crate::components::AudioSourceId>,
+    ) -> Self {
+        self.source_id = try_serialize_field(Self::descriptor_source_id(), [source_id]);
+        self
+    }
+
+    /// This method makes it possible to pack multiple [`crate::components::AudioSourceId`] in a single component batch.
+    ///
+    /// This only makes sense when used in conjunction with [`Self::columns`]. [`Self::with_source_id`] should
+    /// be used when logging a single row's worth of data.
+    #[inline]
+    pub fn with_many_source_id(
+        mut self,
+        source_id: impl IntoIterator<Item = impl Into<crate::components::AudioSourceId>>,
+    ) -> Self {
+        self.source_id = try_serialize_field(Self::descriptor_source_id(), source_id);
+        self
+    }
 }
 
 impl ::re_byte_size::SizeBytes for AssetAudio {
@@ -529,5 +659,7 @@ impl ::re_byte_size::SizeBytes for AssetAudio {
             + self.sample_rate.heap_size_bytes()
             + self.channel_count.heap_size_bytes()
             + self.channel_layout.heap_size_bytes()
+            + self.duration_samples.heap_size_bytes()
+            + self.source_id.heap_size_bytes()
     }
 }

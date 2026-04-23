@@ -22,5 +22,9 @@ Utf8
 
 ## Used by
 
+* [`AudioAnnotationSpan`](../archetypes/audio_annotation_span.md?speculative-link)
+* [`AudioEvent`](../archetypes/audio_event.md?speculative-link)
 * [`AudioSampleReference`](../archetypes/audio_sample_reference.md?speculative-link)
+* [`AudioSeekIndex`](../archetypes/audio_seek_index.md?speculative-link)
+* [`AudioWaveformSummary`](../archetypes/audio_waveform_summary.md?speculative-link)
 * [`VideoFrameReference`](../archetypes/video_frame_reference.md)

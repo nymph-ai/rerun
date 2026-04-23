@@ -1,0 +1,18 @@
+namespace rerun.components;
+
+/// Stable identity for an audio source across streams, assets, summaries, and annotations.
+///
+/// This is intentionally independent from entity path: an entity path names where
+/// data was logged, while an audio source id names the logical recording, device,
+/// track, or pipeline output that downstream derived data refers to.
+table AudioSourceId (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "str",
+  "attr.python.array_aliases": "str | Sequence[str]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, PartialEq, Eq, PartialOrd, Ord, Hash",
+  "attr.rust.repr": "transparent"
+) {
+  value: rerun.datatypes.Utf8 (order: 100);
+}
