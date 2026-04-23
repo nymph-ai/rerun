@@ -1,0 +1,18 @@
+namespace rerun.components;
+
+/// Number of PCM samples at the beginning of a stream to discard (encoder pre-roll).
+///
+/// For Opus this is the pre-skip reported in the Ogg-Opus header (typically
+/// 312 samples at 48 kHz). When logging raw packets without a container,
+/// record the value here so the decoder can trim output at stream start.
+struct AudioPrimingDelay (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint32]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  samples: rerun.datatypes.UInt32 (order: 100);
+}

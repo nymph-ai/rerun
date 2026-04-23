@@ -1,0 +1,18 @@
+namespace rerun.components;
+
+/// Stream continuity marker.
+///
+/// Rows that share a `stream_id` are considered parts of the same logical
+/// capture; a change in `stream_id` signals a recorder restart or resync and
+/// is treated as an implicit discontinuity.
+struct AudioStreamId (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint64]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  id: rerun.datatypes.UInt64 (order: 100);
+}

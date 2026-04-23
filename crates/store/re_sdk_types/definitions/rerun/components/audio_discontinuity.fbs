@@ -1,0 +1,19 @@
+namespace rerun.components;
+
+/// Marks a chunk as resuming after a gap or recorder reset.
+///
+/// When true, the decoder state must be flushed before processing this chunk
+/// and any accumulated resampler / overlap-add state discarded. Chunks
+/// without this component are assumed continuous with the previous chunk on
+/// the same timeline + [components.AudioStreamId].
+struct AudioDiscontinuity (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "bool",
+  "attr.python.array_aliases": "bool | npt.NDArray[np.bool_]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq",
+  "attr.rust.repr": "transparent"
+) {
+  is_discontinuity: rerun.datatypes.Bool (order: 100);
+}

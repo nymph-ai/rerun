@@ -22,4 +22,5 @@ Utf8
 
 ## Used by
 
+* [`AudioSampleReference`](../archetypes/audio_sample_reference.md?speculative-link)
 * [`VideoFrameReference`](../archetypes/video_frame_reference.md)

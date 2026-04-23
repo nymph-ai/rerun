@@ -1,0 +1,18 @@
+namespace rerun.components;
+
+/// Number of audio channels.
+///
+/// Must match the channel count reported by the decoder for the stream's
+/// [components.AudioCodec]. The interleaving order is defined by
+/// [components.AudioChannelLayout].
+struct AudioChannelCount (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint16]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  count: rerun.datatypes.UInt16 (order: 100);
+}

@@ -1,0 +1,13 @@
+namespace rerun.components;
+
+/// Timestamp inside an [archetypes.AssetAudio].
+struct AudioTimestamp (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.array_aliases": "npt.NDArray[np.int64]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Copy, PartialEq, Eq, Default",
+  "attr.rust.repr": "transparent"
+) {
+  timestamp: rerun.datatypes.AudioTimestamp (order: 100);
+}

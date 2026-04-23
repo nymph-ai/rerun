@@ -16,6 +16,18 @@ on [Entities and Components](../../concepts/logging-and-ingestion/entity-compone
 * [`AggregationPolicy`](components/aggregation_policy.md): Policy for aggregation of multiple scalar plot values.
 * [`AlbedoFactor`](components/albedo_factor.md): A color multiplier, usually applied to a whole entity, e.g. a mesh.
 * [`AnnotationContext`](components/annotation_context.md): The annotation context provides additional information on how to display entities.
+* [`AudioChannelCount`](components/audio_channel_count.md): Number of audio channels.
+* [`AudioChannelLayout`](components/audio_channel_layout.md): Speaker arrangement for the channels in an audio stream.
+* [`AudioChunk`](components/audio_chunk.md): A time-bounded, decodable segment of encoded audio.
+* [`AudioCodec`](components/audio_codec.md): The codec used to encode audio stored in [`components.AudioChunk`](https://rerun.io/docs/reference/types/components/audio_chunk?speculative-link).
+* [`AudioDiscontinuity`](components/audio_discontinuity.md): Marks a chunk as resuming after a gap or recorder reset.
+* [`AudioDurationSamples`](components/audio_duration_samples.md): Number of PCM samples per channel produced by decoding a single [`components.AudioChunk`](https://rerun.io/docs/reference/types/components/audio_chunk?speculative-link).
+* [`AudioPrimingDelay`](components/audio_priming_delay.md): Number of PCM samples at the beginning of a stream to discard (encoder pre-roll).
+* [`AudioSampleRate`](components/audio_sample_rate.md): Audio sample rate in Hertz.
+* [`AudioSeekable`](components/audio_seekable.md): Marks a chunk as an independent seek target.
+* [`AudioSequenceNumber`](components/audio_sequence_number.md): Monotonic per-stream sequence number for a chunk.
+* [`AudioStreamId`](components/audio_stream_id.md): Stream continuity marker.
+* [`AudioTimestamp`](components/audio_timestamp.md): Timestamp inside an [`archetypes.AssetAudio`](https://rerun.io/docs/reference/types/archetypes/asset_audio?speculative-link).
 * [`AxisLength`](components/axis_length.md): The length of an axis in local units of the space.
 * [`Blob`](components/blob.md): A binary blob of data.
 * [`CellSize`](components/cell_size.md): The metric size of one grid cell in local scene units.

@@ -1,0 +1,83 @@
+[package]
+name = "re_audio"
+authors.workspace = true
+description = "Rerun audio decoding and playback runtime."
+edition.workspace = true
+homepage.workspace = true
+include.workspace = true
+license.workspace = true
+publish = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["opus", "cpal"]
+
+## Enable serialization for data structures that support it.
+serde = ["dep:serde"]
+
+## Native Opus decoding via libopus (requires system libopus).
+opus = ["dep:opus"]
+
+## `cpal`-backed audio output sink (native only).
+cpal = ["dep:cpal"]
+
+## WebCodecs-based decoding (wasm targets).
+webcodecs = ["dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
+
+## WebAudio-backed output sink (wasm targets).
+web_audio = ["dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
+
+[dependencies]
+re_byte_size.workspace = true
+re_log.workspace = true
+re_tracing.workspace = true
+
+parking_lot.workspace = true
+thiserror.workspace = true
+
+serde = { workspace = true, optional = true, features = ["derive"] }
+
+# Native Opus (requires system `libopus`).
+opus = { version = "0.3", optional = true }
+
+# Native audio output.
+cpal = { version = "0.15", optional = true }
+
+# Resampling — pure Rust, works native + wasm.
+rubato = { version = "0.15", default-features = false, features = ["fft_resampler"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+  "AudioBuffer",
+  "AudioBufferOptions",
+  "AudioBufferSourceNode",
+  "AudioContext",
+  "AudioContextOptions",
+  "AudioContextState",
+  "AudioData",
+  "AudioDataCopyToOptions",
+  "AudioDataInit",
+  "AudioDecoder",
+  "AudioDecoderConfig",
+  "AudioDecoderInit",
+  "AudioDestinationNode",
+  "AudioNode",
+  "AudioSampleFormat",
+  "AudioScheduledSourceNode",
+  "EncodedAudioChunk",
+  "EncodedAudioChunkInit",
+  "EncodedAudioChunkType",
+] }
+
+[dev-dependencies]

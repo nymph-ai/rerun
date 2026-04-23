@@ -1,0 +1,19 @@
+namespace rerun.components;
+
+/// Number of PCM samples per channel produced by decoding a single [components.AudioChunk].
+///
+/// Kept as an explicit column so that the viewer and downstream queries do
+/// not need to decode the payload to know its span. For Opus this is
+/// typically `sample_rate * frame_size_ms / 1000` (e.g. 480 samples for 20 ms
+/// at 24 kHz).
+struct AudioDurationSamples (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint64]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  samples: rerun.datatypes.UInt64 (order: 100);
+}

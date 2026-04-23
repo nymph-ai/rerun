@@ -1,0 +1,18 @@
+namespace rerun.components;
+
+/// Monotonic per-stream sequence number for a chunk.
+///
+/// Useful for gap detection: a jump greater than 1 between successive rows
+/// (within the same [components.AudioStreamId]) surfaces a missing segment
+/// to the viewer without requiring payload inspection.
+struct AudioSequenceNumber (
+  "attr.arrow.transparent",
+  "attr.docs.unreleased",
+  "attr.python.aliases": "int",
+  "attr.python.array_aliases": "int | npt.NDArray[np.uint64]",
+  "attr.rerun.state": "unstable",
+  "attr.rust.derive": "Default, Copy, PartialEq, Eq, PartialOrd, Ord",
+  "attr.rust.repr": "transparent"
+) {
+  seq: rerun.datatypes.UInt64 (order: 100);
+}
