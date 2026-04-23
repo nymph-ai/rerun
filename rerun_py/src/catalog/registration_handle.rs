@@ -14,8 +14,8 @@ use re_protos::{
 use tokio::sync::mpsc;
 use tracing::Instrument as _;
 
-use super::trace_context::read_trace_context_from_python;
 use super::{PyCatalogClientInternal, to_py_err};
+use crate::trace_context::read_trace_context_from_python;
 use crate::utils::{get_tokio_runtime, wait_for_future};
 
 /// Default timeout.
@@ -86,7 +86,7 @@ impl PyRegistrationHandleInternal {
         let task_ids = self.task_ids();
         let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
 
-        let span = read_trace_context_from_python(py, "iter_results");
+        let span = read_trace_context_from_python(py, "RegistrationHandle.iter_results");
 
         // Spawn a task that queries the completion state and channels it to the iterator object.
         let (tx, rx) = mpsc::channel::<PyResult<Vec<RegistrationResult>>>(32 * 1024);
@@ -150,11 +150,11 @@ impl PyRegistrationHandleInternal {
     /// Raises an error if any registration fails.
     #[pyo3(signature = (timeout_secs=None))]
     fn wait(&self, py: Python<'_>, timeout_secs: Option<u64>) -> PyResult<Vec<String>> {
+        let span = read_trace_context_from_python(py, "RegistrationHandle.wait");
+
         let connection = self.client.borrow(py).connection().clone();
         let task_ids = self.task_ids();
         let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
-
-        let span = read_trace_context_from_python(py, "wait");
 
         // Wait for all the tasks to complete and gather all errors. If any happened, we throw an
         // exception.

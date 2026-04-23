@@ -1,21 +1,22 @@
 use arrow::datatypes::DataType;
 use re_chunk::{ComponentIdentifier, EntityPath, TimelineName};
 
+// TODO(grtlr): Error management has grown organically and needs some cleanup.
+
 /// Different variants of errors that can happen when executing lenses.
 #[expect(missing_docs)]
 #[derive(Debug, thiserror::Error)]
 pub enum LensError {
-    #[error("Lens for input component `{input_component}` is missing output components")]
-    MissingOutputComponent {
-        input_component: ComponentIdentifier,
+    #[error("Component '{component}' not found in chunk for entity `{entity_path}`")]
+    ComponentNotFound {
+        entity_path: EntityPath,
+        component: ComponentIdentifier,
     },
 
-    // TODO(grtlr): This is very similar to the error above (just at a later stage). Can we combine those?
-    //              We probably want to split builder errors from computational errors once the API stabilizes.
-    #[error("No component outputs were produced for target entity `{target_entity}`")]
-    NoOutputColumnsProduced {
+    #[error("No output columns for input component `{input_component}`{}", target_entity.as_ref().map_or_else(String::new, |e| format!(" on target entity `{e}`")))]
+    NoOutputColumns {
         input_component: ComponentIdentifier,
-        target_entity: EntityPath,
+        target_entity: Option<EntityPath>,
     },
 
     #[error("Chunk validation failed: {0}")]
@@ -52,7 +53,7 @@ pub enum LensError {
     },
 
     #[error(transparent)]
-    SelectorParseFailed(#[from] crate::SelectorError),
+    SelectorFailed(#[from] crate::SelectorError),
 
     #[error("Failed to scatter existing timeline '{timeline_name}' across output rows")]
     ScatterExistingTimeFailed {

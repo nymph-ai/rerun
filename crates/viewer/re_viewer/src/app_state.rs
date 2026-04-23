@@ -8,7 +8,7 @@ use re_chunk::TimelineName;
 use re_chunk_store::LatestAtQuery;
 use re_entity_db::EntityDb;
 use re_log_channel::{LogReceiverSet, LogSource, RecordingOpenBehavior};
-use re_log_types::{AbsoluteTimeRangeF, StoreId, TableId, TimelinePoint};
+use re_log_types::{AbsoluteTimeRangeF, StoreId, TableId};
 use re_redap_browser::RedapServers;
 use re_redap_client::ConnectionRegistryHandle;
 use re_sdk_types::blueprint::components::{PanelState, PlayState};
@@ -168,9 +168,9 @@ impl AppState {
     }
 
     /// The current time cursor for a recording, if any.
-    pub fn time_cursor_for(&self, store_id: &StoreId) -> Option<TimelinePoint> {
+    pub fn time_cursor_for(&self, store_id: &StoreId) -> Option<re_entity_db::PrefetchTimeCursor> {
         let time_ctrl = self.time_controls.get(store_id)?;
-        Some((*time_ctrl.timeline()?, time_ctrl.time_int()?).into())
+        time_ctrl.time_cursor()
     }
 
     pub fn set_examples_manifest_url(&mut self, egui_ctx: &egui::Context, url: String) {
@@ -203,7 +203,7 @@ impl AppState {
     pub fn show(
         &mut self,
         app_env: &crate::AppEnvironment,
-        startup_options: &mut StartupOptions,
+        startup_options: &StartupOptions,
         app_blueprint: &AppBlueprint<'_>,
         ui: &mut egui::Ui,
         render_ctx: &re_renderer::RenderContext,
@@ -230,12 +230,7 @@ impl AppState {
         match self.navigation.current() {
             Route::Settings { previous } => {
                 let mut show_settings_ui = true;
-                settings_screen_ui(
-                    ui,
-                    &mut self.app_options,
-                    startup_options,
-                    &mut show_settings_ui,
-                );
+                settings_screen_ui(ui, &mut self.app_options, &mut show_settings_ui);
                 if !show_settings_ui {
                     self.navigation.replace((**previous).clone());
                 }
@@ -435,7 +430,6 @@ impl AppState {
                     app_ctx: AppContext {
                         is_test: app_env.is_test(),
 
-                        memory_limit: startup_options.memory_limit,
                         app_options,
                         reflection,
 

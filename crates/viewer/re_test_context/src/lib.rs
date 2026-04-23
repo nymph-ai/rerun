@@ -8,13 +8,13 @@ use std::sync::atomic::AtomicBool;
 use ahash::HashMap;
 use egui::os::OperatingSystem;
 use parking_lot::{Mutex, RwLock};
-use re_chunk::{Chunk, ChunkBuilder, TimeInt, TimelineName};
+use re_chunk::{Chunk, ChunkBuilder, TimelineName};
 use re_chunk_store::LatestAtQuery;
 use re_entity_db::{EntityDb, InstancePath};
+use re_log_types::external::re_tuid::Tuid;
 use re_log_types::{
     ApplicationId, EntityPath, EntityPathPart, SetStoreInfo, StoreId, StoreInfo, StoreKind,
 };
-use re_log_types::{TimelinePoint, external::re_tuid::Tuid};
 use re_sdk_types::archetypes::RecordingInfo;
 use re_sdk_types::{Component as _, ComponentDescriptor};
 use re_types_core::reflection::Reflection;
@@ -291,7 +291,7 @@ impl TestContext {
             re_sdk_types::reflection::generate_reflection().expect("Failed to generate reflection");
 
         Self {
-            app_options: Default::default(),
+            app_options: AppOptions::test(),
             recording_store_id,
             application_id,
 
@@ -608,9 +608,7 @@ impl TestContext {
         store_hub.begin_frame_caches(Some(&self.recording_store_id));
 
         let db = store_hub.entity_db_mut(&self.recording_store_id).unwrap();
-        if db.can_fetch_chunks_from_redap()
-            && let Some(timeline) = self.time_ctrl.read().timeline()
-        {
+        if db.can_fetch_chunks_from_redap() {
             let (rrd_manifest, storage_engine) = db.rrd_manifest_index_mut_and_storage_engine();
             let options = re_entity_db::ChunkPrefetchOptions::default();
             // Budget of 0 bytes so that we don't try to load anything.
@@ -619,14 +617,14 @@ impl TestContext {
             let _err = rrd_manifest.prefetch_chunks(
                 storage_engine.store(),
                 &options,
-                Some(TimelinePoint::from((*timeline, TimeInt::ZERO))),
+                self.time_ctrl.read().time_cursor(),
                 &mut budget,
                 &|_| panic!("We have 0 bytes allowed memory"),
             );
         }
 
         // Ensure the per-store cache exists with up-to-date visualizer subscribers.
-        store_hub.store_cache_entry(&self.recording_store_id, &self.view_class_registry);
+        store_hub.entity_db_and_cache(&self.recording_store_id, &self.view_class_registry);
 
         let route = Route::LocalRecording {
             recording_id: self.recording_store_id.clone(),
@@ -660,8 +658,6 @@ impl TestContext {
         let ctx = ViewerContext {
             app_ctx: AppContext {
                 is_test: true,
-
-                memory_limit: re_memory::MemoryLimit::UNLIMITED,
 
                 app_options: &self.app_options,
                 reflection: &self.reflection,
@@ -931,6 +927,7 @@ impl TestContext {
                 | SystemCommand::ClearActiveBlueprint
                 | SystemCommand::ClearActiveBlueprintAndEnableHeuristics
                 | SystemCommand::AddRedapServer { .. }
+                | SystemCommand::RemoveRedapServer(_)
                 | SystemCommand::EditRedapServerModal { .. }
                 | SystemCommand::UndoBlueprint { .. }
                 | SystemCommand::RedoBlueprint { .. }

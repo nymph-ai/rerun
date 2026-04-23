@@ -38,6 +38,7 @@ use pyo3::{Py, PyAny, PyResult, Python, pyfunction};
 ///
 /// Returns [`tracing::Span::none`] when `perf_telemetry` is disabled.
 #[must_use]
+#[track_caller]
 pub(crate) fn read_trace_context_from_python(
     #[allow(unused)] py: Python<'_>,
     #[allow(unused)] name: &'static str,
@@ -61,6 +62,7 @@ pub(crate) fn read_trace_context_from_python(
 ///
 /// Returns `None` when `perf_telemetry` is disabled.
 #[pyfunction]
+#[pyo3(name = "_get_trace_context_var")]
 pub fn get_trace_context_var(py: Python<'_>) -> PyResult<Py<PyAny>> {
     #[cfg(feature = "perf_telemetry")]
     {

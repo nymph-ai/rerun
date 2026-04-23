@@ -151,7 +151,7 @@ re_view_dataframe = { path = "crates/viewer/re_view_dataframe", version = "=0.32
 re_view_graph = { path = "crates/viewer/re_view_graph", version = "=0.32.0-alpha.1", default-features = false }
 re_view_map = { path = "crates/viewer/re_view_map", version = "=0.32.0-alpha.1", default-features = false }
 re_view_spatial = { path = "crates/viewer/re_view_spatial", version = "=0.32.0-alpha.1", default-features = false }
-re_view_states = { path = "crates/viewer/re_view_states", version = "=0.32.0-alpha.1", default-features = false }
+re_view_status = { path = "crates/viewer/re_view_status", version = "=0.32.0-alpha.1", default-features = false }
 re_view_tensor = { path = "crates/viewer/re_view_tensor", version = "=0.32.0-alpha.1", default-features = false }
 re_view_text_document = { path = "crates/viewer/re_view_text_document", version = "=0.32.0-alpha.1", default-features = false }
 re_view_text_log = { path = "crates/viewer/re_view_text_log", version = "=0.32.0-alpha.1", default-features = false }
@@ -430,8 +430,8 @@ wildmatch = "2.6.1"
 #     Do not make this an `=` dependency, because that may break Rust users’ builds when a newer
 #     version is released, even if they are not building the web viewer.
 #     For details see https://github.com/rerun-io/rerun/issues/8766
-wasm-bindgen = "=0.2.117" # ⚠️ read above notice before touching this!
-wasm-bindgen-cli-support = "=0.2.117" # ⚠️ read above notice before touching this!
+wasm-bindgen = "0.2.117" # ⚠️ read above notice before touching this!
+wasm-bindgen-cli-support = "0.2.117" # ⚠️ read above notice before touching this!
 wasm-bindgen-futures = "0.4.67"
 web-sys = "0.3.94"
 wayland-sys = "0.31.9"
@@ -552,7 +552,7 @@ debug = false
 "re_view_graph".debug = true
 "re_view_map".debug = true
 "re_view_spatial".debug = true
-"re_view_states".debug = true
+"re_view_status".debug = true
 "re_view_tensor".debug = true
 "re_view_text_document".debug = true
 "re_view_text_log".debug = true

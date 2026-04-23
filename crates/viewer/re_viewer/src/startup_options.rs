@@ -20,9 +20,6 @@ pub struct LoginOptions {
 /// Settings set once at startup (e.g. via command-line options) and not serialized.
 #[derive(Clone)]
 pub struct StartupOptions {
-    /// When the total process RAM reaches this limit, we GC old data.
-    pub memory_limit: re_memory::MemoryLimit,
-
     pub persist_state: bool,
 
     /// Whether or not the app is running in the context of a Jupyter Notebook.
@@ -109,6 +106,9 @@ pub struct StartupOptions {
     /// * notebooks & native: use rerun.io/viewer with the crate's last known stable version
     /// * web viewers: use the url of the page it is embedded in
     pub viewer_base_url: Option<String>,
+
+    /// Enable the experimental Status view.
+    pub enable_experimental_status_view: bool,
 }
 
 impl StartupOptions {
@@ -170,7 +170,6 @@ impl StartupOptions {
 impl Default for StartupOptions {
     fn default() -> Self {
         Self {
-            memory_limit: re_memory::MemoryLimit::from_fraction_of_total(0.75),
             persist_state: true,
             is_in_notebook: false,
 
@@ -205,6 +204,8 @@ impl Default for StartupOptions {
             login: None,
 
             viewer_base_url: None,
+
+            enable_experimental_status_view: false,
         }
     }
 }
