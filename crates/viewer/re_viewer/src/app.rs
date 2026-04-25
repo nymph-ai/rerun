@@ -51,6 +51,27 @@ const RERUN_VERSION_KEY: &str = "rerun.version";
 
 const REDAP_TOKEN_KEY: &str = "rerun.redap_token";
 
+/// Reads the `RERUN_LIVE_POLL_INTERVAL_SECONDS` env var and returns the
+/// configured manifest re-poll interval, if any.
+///
+/// Used by streaming Redap dataset segment sources so that recordings being
+/// written live (e.g. an audio corpus that grows over time) can keep their
+/// chunk index in sync without the user reconnecting.
+#[cfg(not(target_arch = "wasm32"))]
+fn live_poll_interval_from_env() -> Option<std::time::Duration> {
+    let raw = std::env::var("RERUN_LIVE_POLL_INTERVAL_SECONDS").ok()?;
+    let secs: f64 = raw.trim().parse().ok()?;
+    if !(secs.is_finite() && secs > 0.0) {
+        return None;
+    }
+    std::time::Duration::try_from_secs_f64(secs).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn live_poll_interval_from_env() -> Option<std::time::Duration> {
+    None
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 const MIN_ZOOM_FACTOR: f32 = 0.2;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1595,9 +1616,15 @@ impl App {
         }
 
         let sender = self.command_sender.clone();
-        let stream = data_source
-            .clone()
-            .stream(Self::auth_error_handler(sender), &self.connection_registry);
+        let streaming_options = re_redap_client::StreamingOptions {
+            live_poll_interval: live_poll_interval_from_env(),
+            ..Default::default()
+        };
+        let stream = data_source.clone().stream_with_options(
+            Self::auth_error_handler(sender),
+            &self.connection_registry,
+            streaming_options,
+        );
 
         #[cfg(feature = "analytics")]
         if let Some(analytics) = re_analytics::Analytics::global_or_init() {

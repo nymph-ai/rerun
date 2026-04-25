@@ -338,6 +338,14 @@ pub struct StreamingOptions {
 
     /// Optional callback invoked as chunks are downloaded.
     pub on_progress: Option<ProgressCallback>,
+
+    /// If set, after the initial RRD manifest scan completes for a Recording
+    /// store, keep the streaming task alive and re-fetch the manifest at this
+    /// interval, emitting any new chunks as additional `RrdManifest` messages.
+    ///
+    /// Only applies to lazy (on-demand) streaming; ignored when
+    /// [`Self::force_full_download`] is set or the store is a Blueprint.
+    pub live_poll_interval: Option<web_time::Duration>,
 }
 
 impl std::fmt::Debug for StreamingOptions {
@@ -345,6 +353,7 @@ impl std::fmt::Debug for StreamingOptions {
         f.debug_struct("StreamingOptions")
             .field("force_full_download", &self.force_full_download)
             .field("on_progress", &self.on_progress.as_ref().map(|_| "…"))
+            .field("live_poll_interval", &self.live_poll_interval)
             .finish()
     }
 }
@@ -579,6 +588,17 @@ async fn stream_segment_from_server(
             match store_id.kind() {
                 StoreKind::Recording if !options.force_full_download => {
                     re_log::debug!("Letting the viewer load chunks on-demand");
+                    if let Some(interval) = options.live_poll_interval {
+                        return follow_manifest(
+                            client,
+                            tx,
+                            &store_id,
+                            dataset_id,
+                            segment_id,
+                            interval,
+                        )
+                        .await;
+                    }
                     return Ok(ControlFlow::Continue(()));
                 }
                 StoreKind::Recording | StoreKind::Blueprint => {
@@ -732,6 +752,80 @@ async fn stream_segment_from_server(
         load_chunks(client, tx, &store_id, filtered_batch, options).await
     } else {
         load_chunks(client, tx, &store_id, batch, options).await
+    }
+}
+
+/// Periodically re-fetch the RRD manifest and emit new parts as additional
+/// `RrdManifest` messages.
+///
+/// `insert_rrd_manifest` is idempotent on the receive side, so re-sending the
+/// full manifest each tick is safe — duplicate `chunk_id`s overwrite themselves
+/// with the same value. We do not re-emit `RrdManifestComplete`; that already
+/// fired once and the receive side treats subsequent manifest messages as
+/// additive.
+async fn follow_manifest(
+    client: &mut ConnectionClient,
+    tx: &re_log_channel::LogSender,
+    store_id: &StoreId,
+    dataset_id: EntryId,
+    segment_id: SegmentId,
+    interval: web_time::Duration,
+) -> ApiResult<ControlFlow<()>> {
+    re_log::debug!(
+        "Following RRD manifest for {store_id:?} every {:.1}s",
+        interval.as_secs_f32()
+    );
+
+    // base==max gives us a steady fixed-interval poll (BackoffGenerator
+    // still adds jitter via DEFAULT_JITTER_FACTOR which we want, to keep
+    // multiple viewers from stampeding the server in lockstep).
+    let mut backoff = re_backoff::BackoffGenerator::new(interval, interval)
+        .expect("base==max so the constructor cannot fail");
+
+    loop {
+        backoff.gen_next().sleep().await;
+
+        let manifest_stream_result = client
+            .get_rrd_manifest_stream(dataset_id, segment_id.clone())
+            .await;
+        let trace_id = manifest_stream_result
+            .as_ref()
+            .ok()
+            .and_then(|s| s.trace_id());
+        match manifest_stream_result {
+            Ok(manifest_stream) => {
+                let mut manifest_stream = std::pin::pin!(manifest_stream);
+                while let Some(part_result) = manifest_stream.next().await {
+                    let raw_rrd_manifest_part = part_result?;
+                    let rrd_manifest =
+                        re_log_encoding::RrdManifest::try_new(&raw_rrd_manifest_part).map_err(
+                            |err| {
+                                ApiError::invalid_arguments_with_source(
+                                    trace_id,
+                                    err,
+                                    "Invalid RRD manifest part",
+                                )
+                            },
+                        )?;
+
+                    if tx
+                        .send(DataSourceMessage::RrdManifest(
+                            store_id.clone(),
+                            Arc::new(rrd_manifest),
+                        ))
+                        .is_err()
+                    {
+                        re_log::debug!("Receiver disconnected; stopping manifest follow loop");
+                        return Ok(ControlFlow::Break(()));
+                    }
+                }
+            }
+            Err(err) => {
+                // Transient errors (server bouncing, network blip) shouldn't
+                // tear down the loop. Log and try again on the next tick.
+                re_log::debug!("manifest follow re-fetch failed: {err}");
+            }
+        }
     }
 }
 

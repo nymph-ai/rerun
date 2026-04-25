@@ -15,6 +15,7 @@ pub struct ChunkEventStats {
     pub num_chunks_compacted: u64,
     pub num_chunks_overwritten: u64,
     pub num_chunks_explicit_drop: u64,
+    pub num_chunks_evicted: u64,
 }
 
 impl re_byte_size::MemUsageTreeCapture for ChunkEventStats {
@@ -42,6 +43,7 @@ impl PerStoreChunkSubscriber for ChunkEventStats {
                     ChunkDeletionReason::Compaction => self.num_chunks_compacted += 1,
                     ChunkDeletionReason::Overwrite => self.num_chunks_overwritten += 1,
                     ChunkDeletionReason::ExplicitDrop => self.num_chunks_explicit_drop += 1,
+                    ChunkDeletionReason::Evicted => self.num_chunks_evicted += 1,
                 }
             }
         }
