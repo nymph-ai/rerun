@@ -487,6 +487,40 @@ impl Dataset {
             .map_err(|err| Error::RrdLoadingError(err.into()))
     }
 
+    /// Receivers for manifest-version bumps across every live-tail layer of a
+    /// segment. Returns an empty `Vec` when no layer supports live updates,
+    /// which the `GetRrdManifest` handler treats as "stream closes after the
+    /// initial snapshot".
+    pub fn subscribe_manifest_updates(
+        &self,
+        segment_id: &SegmentId,
+    ) -> Result<Vec<tokio::sync::watch::Receiver<u64>>, Error> {
+        let partition = self.segment(segment_id)?;
+        Ok(partition
+            .iter_layers()
+            .filter_map(|(_, layer)| layer.resolved_store().subscribe_manifest_updates())
+            .collect())
+    }
+
+    /// Snapshot a segment's layers and computed `StoreId` for use in the
+    /// `GetRrdManifest` live-tail stream. Cloning the layers detaches them
+    /// from the store-pool lock so the streaming handler can recompute the
+    /// merged manifest on each notification without re-acquiring it.
+    pub fn segment_manifest_snapshot(
+        &self,
+        segment_id: &SegmentId,
+    ) -> Result<(StoreId, Vec<crate::store::Layer>), Error> {
+        let partition = self.segment(segment_id)?;
+        let application_id = "n/a"; // irrelevant, dropped immediately
+        let segment_store_id =
+            StoreId::new(self.store_kind(), application_id, segment_id.to_string());
+        let layers: Vec<crate::store::Layer> = partition
+            .iter_layers()
+            .map(|(_, layer)| layer.clone())
+            .collect();
+        Ok((segment_store_id, layers))
+    }
+
     // we can't expect there are no async calls without the lance feature
     #[allow(clippy::allow_attributes)]
     #[allow(clippy::unused_async)]

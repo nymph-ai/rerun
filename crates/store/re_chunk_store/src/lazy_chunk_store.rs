@@ -74,6 +74,12 @@ pub struct LazyChunkStore<P: ChunkProvider> {
     /// viewer is currently looking at", not "keep the union of every range
     /// ever observed".
     cursor: RwLock<HashMap<TimelineName, AbsoluteTimeRange>>,
+
+    /// Monotonic counter incremented on every successful
+    /// [`Self::extend_with_manifest`]. Server-streaming RPCs subscribe via
+    /// [`Self::subscribe_manifest_updates`] to drive live-tail manifest
+    /// updates without polling.
+    manifest_version_tx: tokio::sync::watch::Sender<u64>,
 }
 
 impl<P: ChunkProvider> LazyChunkStore<P> {
@@ -105,6 +111,7 @@ impl<P: ChunkProvider> LazyChunkStore<P> {
         let timeline_ranges = Self::build_timeline_ranges(&manifest);
 
         let store_id = manifest.store_id().clone();
+        let (manifest_version_tx, _) = tokio::sync::watch::channel(0);
         Self {
             store: ChunkStoreHandle::new(store),
             provider,
@@ -114,6 +121,7 @@ impl<P: ChunkProvider> LazyChunkStore<P> {
             chunk_id_to_index: RwLock::new(chunk_id_to_index),
             timeline_ranges: RwLock::new(timeline_ranges),
             cursor: RwLock::new(HashMap::new()),
+            manifest_version_tx,
         }
     }
 
@@ -276,6 +284,18 @@ impl<P: ChunkProvider> LazyChunkStore<P> {
         *self.timeline_ranges.write() = new_ranges;
         *self.manifest_slot.write() = manifest;
         *self.raw_manifest_slot.write() = raw_manifest;
+
+        self.manifest_version_tx
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    /// Subscribe to manifest-version bumps. Each successful
+    /// [`Self::extend_with_manifest`] increments the watched value; subscribers
+    /// can `.await rx.changed()` to drive a live-tail manifest stream from the
+    /// server's `GetRrdManifest` RPC handler without polling.
+    #[inline]
+    pub fn subscribe_manifest_updates(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.manifest_version_tx.subscribe()
     }
 
     pub fn all_entities(&self) -> IntSet<EntityPath> {

@@ -106,6 +106,15 @@ impl ResolvedStore {
         }
     }
 
+    /// Subscribe to manifest-version bumps for live-tail backings. Eager
+    /// stores and static lazy backings (plain RRD files) return `None`.
+    pub fn subscribe_manifest_updates(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        match self {
+            Self::Eager(_) => None,
+            Self::Lazy(l) => l.subscribe_manifest_updates(),
+        }
+    }
+
     pub fn extract_properties(&self) -> Result<RecordBatch, super::Error> {
         match self {
             Self::Eager(h) => h.read().extract_properties(),

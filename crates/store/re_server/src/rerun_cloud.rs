@@ -1359,7 +1359,7 @@ impl RerunCloudService for RerunCloudHandler {
         let entry_id = get_entry_id_from_headers(&store, &request)?;
 
         let request = request.into_inner();
-        let segment_id = request
+        let segment_id: SegmentId = request
             .segment_id
             .ok_or_else(|| {
                 missing_field!(
@@ -1370,17 +1370,75 @@ impl RerunCloudService for RerunCloudHandler {
             .try_into()?;
 
         let dataset = store.dataset(entry_id)?;
-        let rrd_manifest = dataset.rrd_manifest(&segment_id)?;
+        let (segment_store_id, layers) = dataset.segment_manifest_snapshot(&segment_id)?;
+        let mut receivers = dataset.subscribe_manifest_updates(&segment_id)?;
+        drop(store);
 
-        let rrd_manifest_stream =
-            futures::stream::once(futures::future::ok(GetRrdManifestResponse {
-                rrd_manifest: Some(rrd_manifest.to_transport(()).map_err(|err| {
-                    tonic::Status::internal(format!("Unable to compute RRD manifest: {err:#}"))
+        // Mark the initial watch value as already observed so the first
+        // post-snapshot `changed()` only fires on a real bump.
+        for rx in &mut receivers {
+            rx.mark_unchanged();
+        }
+
+        // Recompute the merged manifest from the snapshotted layers. Each
+        // call clones the underlying lazy layers' raw manifests (which now
+        // reflect any rows the live-edge poller has absorbed since the last
+        // emit) and merges them under the segment-scoped store id.
+        let rebuild = move |layers: &[crate::store::Layer]| -> tonic::Result<GetRrdManifestResponse> {
+            let per_layer: Vec<re_log_encoding::RawRrdManifest> = layers
+                .iter()
+                .map(|layer| layer.rrd_manifest())
+                .collect::<Result<_, _>>()?;
+            let merged = re_log_encoding::RawRrdManifest::merge(segment_store_id.clone(), per_layer)
+                .map_err(|err| {
+                    tonic::Status::internal(format!("Unable to merge RRD manifest: {err:#}"))
+                })?;
+            Ok(GetRrdManifestResponse {
+                rrd_manifest: Some(merged.to_transport(()).map_err(|err| {
+                    tonic::Status::internal(format!("Unable to encode RRD manifest: {err:#}"))
                 })?),
-            }));
+            })
+        };
+
+        let stream = async_stream::try_stream! {
+            // Initial snapshot. The receive side flips RedapConnectionState
+            // to Ready as soon as this lands.
+            yield rebuild(&layers)?;
+
+            // No live-tail subscribers (e.g. an Eager backing): close the
+            // stream so the client doesn't sit on a dangling fetch forever.
+            if receivers.is_empty() {
+                return;
+            }
+
+            // Race every layer's update notifier; emit a fresh merged
+            // manifest whenever any one of them bumps. The receive side's
+            // `add_rrd_manifest_message` path is idempotent — duplicate
+            // chunk_ids overwrite themselves with the same value — so
+            // re-emitting the full snapshot is safe and simpler than
+            // diffing on the server.
+            loop {
+                let mut futs: futures::stream::FuturesUnordered<_> = receivers
+                    .iter_mut()
+                    .map(|rx| Box::pin(async move { rx.changed().await }))
+                    .collect();
+                use tokio_stream::StreamExt as _;
+                match futs.next().await {
+                    Some(Ok(())) => {
+                        drop(futs);
+                        yield rebuild(&layers)?;
+                    }
+                    Some(Err(_)) | None => {
+                        // All senders dropped — nothing more will ever
+                        // arrive. End the stream cleanly.
+                        return;
+                    }
+                }
+            }
+        };
 
         Ok(tonic::Response::new(
-            Box::pin(rrd_manifest_stream) as Self::GetRrdManifestStream
+            Box::pin(stream) as Self::GetRrdManifestStream
         ))
     }
 

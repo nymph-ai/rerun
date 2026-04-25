@@ -338,14 +338,6 @@ pub struct StreamingOptions {
 
     /// Optional callback invoked as chunks are downloaded.
     pub on_progress: Option<ProgressCallback>,
-
-    /// If set, after the initial RRD manifest scan completes for a Recording
-    /// store, keep the streaming task alive and re-fetch the manifest at this
-    /// interval, emitting any new chunks as additional `RrdManifest` messages.
-    ///
-    /// Only applies to lazy (on-demand) streaming; ignored when
-    /// [`Self::force_full_download`] is set or the store is a Blueprint.
-    pub live_poll_interval: Option<web_time::Duration>,
 }
 
 impl std::fmt::Debug for StreamingOptions {
@@ -353,7 +345,6 @@ impl std::fmt::Debug for StreamingOptions {
         f.debug_struct("StreamingOptions")
             .field("force_full_download", &self.force_full_download)
             .field("on_progress", &self.on_progress.as_ref().map(|_| "…"))
-            .field("live_poll_interval", &self.live_poll_interval)
             .finish()
     }
 }
@@ -526,57 +517,52 @@ async fn stream_segment_from_server(
         Ok(manifest_stream) => {
             let mut manifest_stream = std::pin::pin!(manifest_stream);
 
-            let mut rrd_manifest_parts: Vec<Arc<re_log_encoding::RrdManifest>> = Vec::new();
-
-            while let Some(part_result) = manifest_stream.next().await {
-                let raw_rrd_manifest_part = part_result?;
-
-                let part_nr = rrd_manifest_parts.len() + 1;
-                re_log::debug!(
-                    "Received RRD manifest part #{part_nr}/? ({} deflated, {:.1}s elapsed)",
-                    re_format::format_bytes(raw_rrd_manifest_part.total_size_bytes() as _),
-                    start_time.elapsed().as_secs_f32(),
-                );
-
-                let rrd_manifest = re_log_encoding::RrdManifest::try_new(&raw_rrd_manifest_part)
-                    .map_err(|err| {
-                        ApiError::invalid_arguments_with_source(
-                            trace_id,
-                            err,
-                            "Invalid RRD manifest part",
-                        )
-                    })?;
-
-                let rrd_manifest = Arc::new(rrd_manifest);
-
-                if tx
-                    .send(DataSourceMessage::RrdManifest(
-                        store_id.clone(),
-                        rrd_manifest.clone(),
-                    ))
-                    .is_err()
-                {
-                    re_log::debug!("Receiver disconnected");
-                    return Ok(ControlFlow::Break(()));
-                }
-
-                rrd_manifest_parts.push(rrd_manifest);
-            }
-
-            if rrd_manifest_parts.is_empty() {
+            // Live-tail manifest protocol: the server sends one merged
+            // manifest snapshot for the initial scan, then keeps the stream
+            // open and pushes a fresh full snapshot every time new chunks
+            // land in the backing index. The receive side's
+            // `add_rrd_manifest_message` path is idempotent on duplicate
+            // chunk_ids, so re-emitting a superset snapshot is the right
+            // shape: no per-segment diff tracking, no missed-update windows.
+            let Some(first_part_result) = manifest_stream.next().await else {
                 return Err(ApiError::deserialization(
                     trace_id,
                     "failed to parse the response for /GetRrdManifest (no data)",
                 ));
-            }
+            };
+            let raw_first_part = first_part_result?;
 
-            let part_nr = rrd_manifest_parts.len();
             re_log::debug!(
-                "Full RRD manifest loaded in {:.1}s in {}",
+                "Received initial RRD manifest snapshot ({} deflated, {:.1}s elapsed)",
+                re_format::format_bytes(raw_first_part.total_size_bytes() as _),
                 start_time.elapsed().as_secs_f32(),
-                re_format::format_plural_s(part_nr, "part")
             );
 
+            let first_manifest = Arc::new(
+                re_log_encoding::RrdManifest::try_new(&raw_first_part).map_err(|err| {
+                    ApiError::invalid_arguments_with_source(
+                        trace_id,
+                        err,
+                        "Invalid RRD manifest part",
+                    )
+                })?,
+            );
+
+            if tx
+                .send(DataSourceMessage::RrdManifest(
+                    store_id.clone(),
+                    first_manifest.clone(),
+                ))
+                .is_err()
+            {
+                re_log::debug!("Receiver disconnected");
+                return Ok(ControlFlow::Break(()));
+            }
+
+            // Mark the manifest complete after the initial snapshot so the
+            // viewer flips RedapConnectionState to `Ready`. Further parts
+            // emitted on the same stream are live updates, not initial
+            // batches — additive append never unsets `Complete`.
             if tx
                 .send(DataSourceMessage::RrdManifestComplete(store_id.clone()))
                 .is_err()
@@ -587,32 +573,31 @@ async fn stream_segment_from_server(
 
             match store_id.kind() {
                 StoreKind::Recording if !options.force_full_download => {
-                    re_log::debug!("Letting the viewer load chunks on-demand");
-                    if let Some(interval) = options.live_poll_interval {
-                        return follow_manifest(
-                            client,
-                            tx,
-                            &store_id,
-                            dataset_id,
-                            segment_id,
-                            interval,
-                        )
-                        .await;
+                    re_log::debug!("Live-tailing RRD manifest stream");
+                    while let Some(part_result) = manifest_stream.next().await {
+                        let raw_part = part_result?;
+                        let manifest = Arc::new(
+                            re_log_encoding::RrdManifest::try_new(&raw_part).map_err(|err| {
+                                ApiError::invalid_arguments_with_source(
+                                    trace_id,
+                                    err,
+                                    "Invalid RRD manifest update",
+                                )
+                            })?,
+                        );
+                        if tx
+                            .send(DataSourceMessage::RrdManifest(store_id.clone(), manifest))
+                            .is_err()
+                        {
+                            re_log::debug!("Receiver disconnected");
+                            return Ok(ControlFlow::Break(()));
+                        }
                     }
                     return Ok(ControlFlow::Continue(()));
                 }
                 StoreKind::Recording | StoreKind::Blueprint => {
                     re_log::debug!("Loading all of the chunks in one go; most important first");
-                    let refs: Vec<&re_log_encoding::RrdManifest> =
-                        rrd_manifest_parts.iter().map(|m| m.as_ref()).collect();
-                    let combined = re_log_encoding::RrdManifest::concat(&refs).map_err(|err| {
-                        ApiError::invalid_arguments_with_source(
-                            trace_id,
-                            err,
-                            "Failed to concatenate RRD manifest parts",
-                        )
-                    })?;
-                    let batch = sort_batch(combined.chunk_fetcher_rb()).map_err(|err| {
+                    let batch = sort_batch(first_manifest.chunk_fetcher_rb()).map_err(|err| {
                         ApiError::invalid_arguments_with_source(
                             trace_id,
                             err,
@@ -752,80 +737,6 @@ async fn stream_segment_from_server(
         load_chunks(client, tx, &store_id, filtered_batch, options).await
     } else {
         load_chunks(client, tx, &store_id, batch, options).await
-    }
-}
-
-/// Periodically re-fetch the RRD manifest and emit new parts as additional
-/// `RrdManifest` messages.
-///
-/// `insert_rrd_manifest` is idempotent on the receive side, so re-sending the
-/// full manifest each tick is safe — duplicate `chunk_id`s overwrite themselves
-/// with the same value. We do not re-emit `RrdManifestComplete`; that already
-/// fired once and the receive side treats subsequent manifest messages as
-/// additive.
-async fn follow_manifest(
-    client: &mut ConnectionClient,
-    tx: &re_log_channel::LogSender,
-    store_id: &StoreId,
-    dataset_id: EntryId,
-    segment_id: SegmentId,
-    interval: web_time::Duration,
-) -> ApiResult<ControlFlow<()>> {
-    re_log::debug!(
-        "Following RRD manifest for {store_id:?} every {:.1}s",
-        interval.as_secs_f32()
-    );
-
-    // base==max gives us a steady fixed-interval poll (BackoffGenerator
-    // still adds jitter via DEFAULT_JITTER_FACTOR which we want, to keep
-    // multiple viewers from stampeding the server in lockstep).
-    let mut backoff = re_backoff::BackoffGenerator::new(interval, interval)
-        .expect("base==max so the constructor cannot fail");
-
-    loop {
-        backoff.gen_next().sleep().await;
-
-        let manifest_stream_result = client
-            .get_rrd_manifest_stream(dataset_id, segment_id.clone())
-            .await;
-        let trace_id = manifest_stream_result
-            .as_ref()
-            .ok()
-            .and_then(|s| s.trace_id());
-        match manifest_stream_result {
-            Ok(manifest_stream) => {
-                let mut manifest_stream = std::pin::pin!(manifest_stream);
-                while let Some(part_result) = manifest_stream.next().await {
-                    let raw_rrd_manifest_part = part_result?;
-                    let rrd_manifest =
-                        re_log_encoding::RrdManifest::try_new(&raw_rrd_manifest_part).map_err(
-                            |err| {
-                                ApiError::invalid_arguments_with_source(
-                                    trace_id,
-                                    err,
-                                    "Invalid RRD manifest part",
-                                )
-                            },
-                        )?;
-
-                    if tx
-                        .send(DataSourceMessage::RrdManifest(
-                            store_id.clone(),
-                            Arc::new(rrd_manifest),
-                        ))
-                        .is_err()
-                    {
-                        re_log::debug!("Receiver disconnected; stopping manifest follow loop");
-                        return Ok(ControlFlow::Break(()));
-                    }
-                }
-            }
-            Err(err) => {
-                // Transient errors (server bouncing, network blip) shouldn't
-                // tear down the loop. Log and try again on the next tick.
-                re_log::debug!("manifest follow re-fetch failed: {err}");
-            }
-        }
     }
 }
 

@@ -50,6 +50,7 @@ re_types_core.workspace = true
 ahash.workspace = true
 anyhow.workspace = true
 arrow.workspace = true
+async-stream.workspace = true
 axum.workspace = true
 bincode.workspace = true
 bytes.workspace = true

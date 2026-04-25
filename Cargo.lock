@@ -9403,6 +9403,7 @@ dependencies = [
  "similar-asserts",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "web-time",
 ]
 
@@ -10651,6 +10652,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "arrow",
+ "async-stream",
  "axum",
  "bincode",
  "bytes",

@@ -75,6 +75,14 @@ pub trait LazyStore: Send + Sync + 'static {
     fn observe_query_cursor(&self, timeline: TimelineName, range: AbsoluteTimeRange) {
         let _ = (timeline, range);
     }
+
+    /// Subscribe to manifest-version bumps for backings that hot-swap their
+    /// manifest at runtime (e.g. live-tail Lance corpora). Returns `None` for
+    /// static backings whose manifest never changes after construction —
+    /// callers should treat that as "no live updates available".
+    fn subscribe_manifest_updates(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        None
+    }
 }
 
 impl LazyStore for crate::LazyRrdStore {
@@ -217,5 +225,8 @@ impl<P: crate::ChunkProvider> LazyStore for crate::LazyChunkStore<P> {
     }
     fn observe_query_cursor(&self, timeline: TimelineName, range: AbsoluteTimeRange) {
         Self::observe_query_cursor(self, timeline, range);
+    }
+    fn subscribe_manifest_updates(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(Self::subscribe_manifest_updates(self))
     }
 }
