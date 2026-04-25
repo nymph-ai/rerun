@@ -196,16 +196,19 @@ impl LazyRrdStore {
     }
 
     /// The parsed manifest for this store.
-    pub fn manifest(&self) -> &Arc<RrdManifest> {
-        &self.manifest
+    ///
+    /// Returned by value so the API matches [`crate::LazyChunkStore`], which
+    /// has to hand out clones to support live-edge polling.
+    pub fn manifest(&self) -> Arc<RrdManifest> {
+        Arc::clone(&self.manifest)
     }
 
     /// The raw manifest as-parsed from the RRD footer, before validation/extraction.
     ///
     /// Kept around so the server can synthesize `GetRrdManifest` responses without materializing
     /// chunks: the footer already contains everything a client needs to pick which chunks to fetch.
-    pub fn raw_manifest(&self) -> &Arc<RawRrdManifest> {
-        &self.raw_manifest
+    pub fn raw_manifest(&self) -> Arc<RawRrdManifest> {
+        Arc::clone(&self.raw_manifest)
     }
 
     /// Look up the manifest row index for a given chunk ID.
@@ -213,9 +216,14 @@ impl LazyRrdStore {
         self.chunk_id_to_index.get(chunk_id).copied()
     }
 
-    /// Per-chunk timeline ranges.
-    pub fn timeline_ranges(&self) -> &HashMap<ChunkId, IntMap<Timeline, AbsoluteTimeRange>> {
-        &self.timeline_ranges
+    /// Per-chunk timeline range, cloned out for API parity with
+    /// [`crate::LazyChunkStore::timeline_range`]. Returns `None` for chunks
+    /// that are static-only or not present in the manifest.
+    pub fn timeline_range(
+        &self,
+        chunk_id: &ChunkId,
+    ) -> Option<IntMap<Timeline, AbsoluteTimeRange>> {
+        self.timeline_ranges.get(chunk_id).cloned()
     }
 
     /// The store ID (from the manifest, no store lock needed).

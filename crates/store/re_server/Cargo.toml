@@ -80,7 +80,7 @@ url.workspace = true
 
 # Optional dependencies:
 # TODO(lancedb/lance#3073): lance depends on system protoc, so lance must be an opt-in dependency
-lance = { workspace = true, optional = true }
+lance = { workspace = true, features = ["aws", "gcp", "azure"], optional = true }
 lance-index = { workspace = true, optional = true }
 lance-linalg = { workspace = true, optional = true }
 

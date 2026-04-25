@@ -1,0 +1,32 @@
+[package]
+name = "nereid_corpus_server"
+authors.workspace = true
+description = "Standalone Redap server backed by a Lance corpus index of Opus chunks (Nereid)"
+edition.workspace = true
+homepage.workspace = true
+include.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "nereid-corpus-server"
+path = "src/main.rs"
+
+[dependencies]
+re_chunk_store.workspace = true
+re_corpus_producer.workspace = true
+re_grpc_server.workspace = true
+re_log = { workspace = true, features = ["setup"] }
+re_protos.workspace = true
+re_server.workspace = true
+
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+tracing.workspace = true

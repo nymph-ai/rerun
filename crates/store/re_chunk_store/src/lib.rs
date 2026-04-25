@@ -14,6 +14,7 @@
 #![doc = document_features::document_features!()]
 //!
 
+mod chunk_provider;
 mod compact;
 mod dataframe;
 
@@ -22,7 +23,11 @@ pub mod entity_tree;
 mod events;
 mod gc;
 #[cfg(not(target_arch = "wasm32"))]
+mod lazy_chunk_store;
+#[cfg(not(target_arch = "wasm32"))]
 mod lazy_rrd_store;
+#[cfg(not(target_arch = "wasm32"))]
+mod lazy_store;
 mod lineage;
 mod missing_chunk_reporter;
 mod properties;
@@ -42,7 +47,7 @@ pub use {
         Chunk, ChunkId, ChunkShared, LatestAtQuery, RangeQuery, RangeQueryOptions, RowId, Span,
         UnitChunkShared,
     },
-    re_log_types::{AbsoluteTimeRange, TimeInt, TimeType, Timeline},
+    re_log_types::{AbsoluteTimeRange, TimeInt, TimeType, Timeline, TimelineName},
     re_sorbet::{ColumnDescriptor, ComponentColumnDescriptor, IndexColumnDescriptor},
 };
 
@@ -72,8 +77,13 @@ pub use self::subscribers::{
     ChunkStoreSubscriber, ChunkStoreSubscriberHandle, PerStoreChunkSubscriber,
 };
 
+pub use self::chunk_provider::ChunkProvider;
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::lazy_chunk_store::{EvictionStats, LazyChunkStore};
 #[cfg(not(target_arch = "wasm32"))]
 pub use self::lazy_rrd_store::LazyRrdStore;
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::lazy_store::LazyStore;
 
 pub(crate) use self::store::ColumnMetadataState;
 

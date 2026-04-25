@@ -275,6 +275,59 @@ impl InMemoryStore {
         Ok(())
     }
 
+    /// Register a Lance table by URL, opening it through `object_store`.
+    ///
+    /// This accepts any URL scheme supported by the `object_store` crate
+    /// (`s3://`, `gs://`, `az://`, `file://`, …). Credentials come from
+    /// `storage_options` (typically env-derived), so the caller controls
+    /// which bucket the server can read.
+    #[cfg(feature = "lance")]
+    pub async fn load_url_as_table(
+        &mut self,
+        name: &str,
+        url: &url::Url,
+        storage_options: std::collections::HashMap<String, String>,
+        on_duplicate: IfDuplicateBehavior,
+    ) -> Result<EntryId, Error> {
+        use std::sync::Arc;
+
+        use re_protos::cloud::v1alpha1::ext::LanceTable;
+
+        let entry_name = EntryName::new(name.to_owned()).map_err(Error::InvalidEntryName)?;
+
+        let dataset = lance::dataset::builder::DatasetBuilder::from_uri(url.as_str())
+            .with_storage_options(storage_options)
+            .load()
+            .await
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+
+        let table = TableType::LanceDataset(Arc::new(dataset));
+        let provider_details = LanceTable {
+            table_url: url.clone(),
+        };
+
+        let entry_id = EntryId::new();
+        match self.table_by_name(&entry_name) {
+            None => {
+                self.add_table_entry(entry_name, entry_id, table, provider_details)?;
+            }
+            Some(_) => match on_duplicate {
+                IfDuplicateBehavior::Overwrite => {
+                    re_log::info!("Overwriting {entry_name}");
+                    self.add_table_entry(entry_name, entry_id, table, provider_details)?;
+                }
+                IfDuplicateBehavior::Skip => {
+                    re_log::info!("Ignoring {entry_name}: it already exists");
+                }
+                IfDuplicateBehavior::Error => {
+                    return Err(Error::DuplicateEntryNameError(entry_name));
+                }
+            },
+        }
+
+        Ok(entry_id)
+    }
+
     #[cfg(feature = "lance")]
     pub async fn load_directory_as_table(
         &mut self,

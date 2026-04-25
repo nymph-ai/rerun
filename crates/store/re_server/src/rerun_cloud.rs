@@ -16,7 +16,9 @@ use re_chunk_store::{
     Chunk, ChunkId, ChunkStore, ChunkStoreHandle, ChunkTrackingMode, LatestAtQuery, RangeQuery,
 };
 use re_log_encoding::ToTransport as _;
-use re_log_types::{AbsoluteTimeRange, EntityPath, EntryId, StoreId, StoreKind, Timeline};
+use re_log_types::{
+    AbsoluteTimeRange, EntityPath, EntryId, StoreId, StoreKind, TimeInt, Timeline, TimelineName,
+};
 use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService;
 use re_protos::cloud::v1alpha1::{
     DeleteEntryResponse, EntryDetails, EntryKind, FetchChunksRequest,
@@ -49,6 +51,54 @@ use crate::store::ResolvedStore;
 use crate::store::{
     ChunkKey, Dataset, Error, InMemoryStore, StoreSlotId, TASK_ID_SUCCESS, Table, TaskResult,
 };
+
+/// Collect object-store credentials/config from well-known environment
+/// variables so remote Lance tables (s3/gs/az) can be registered.
+///
+/// Keys are forwarded lowercase with underscores, which matches the form
+/// `object_store` expects when it walks a `HashMap<String, String>` of
+/// options. We pass through all common AWS/GCS/Azure envs plus the
+/// `AWS_ENDPOINT_URL` / `AWS_ALLOW_HTTP` knobs that MinIO-style
+/// deployments need.
+#[cfg(feature = "lance")]
+fn storage_options_from_env() -> HashMap<String, String> {
+    const KEYS: &[&str] = &[
+        // AWS S3 / S3-compatible (MinIO, R2, …)
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_ENDPOINT",
+        "AWS_ENDPOINT_URL",
+        "AWS_ALLOW_HTTP",
+        "AWS_VIRTUAL_HOSTED_STYLE_REQUEST",
+        "AWS_S3_ALLOW_UNSAFE_RENAME",
+        // Google Cloud Storage
+        "GOOGLE_SERVICE_ACCOUNT",
+        "GOOGLE_SERVICE_ACCOUNT_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_BUCKET",
+        // Azure Blob Storage
+        "AZURE_STORAGE_ACCOUNT_NAME",
+        "AZURE_STORAGE_ACCOUNT_KEY",
+        "AZURE_STORAGE_CLIENT_ID",
+        "AZURE_STORAGE_CLIENT_SECRET",
+        "AZURE_STORAGE_TENANT_ID",
+        "AZURE_STORAGE_SAS_KEY",
+        "AZURE_STORAGE_TOKEN",
+    ];
+
+    let mut options = HashMap::new();
+    for key in KEYS {
+        if let Ok(value) = std::env::var(key)
+            && !value.is_empty()
+        {
+            options.insert(key.to_ascii_lowercase(), value);
+        }
+    }
+    options
+}
 
 #[derive(Debug)]
 pub struct RerunCloudHandlerSettings {
@@ -146,6 +196,37 @@ impl RerunCloudHandlerBuilder {
     ) -> Self {
         self.store.set_eager_chunk_store_config(config);
         self
+    }
+
+    /// Register a pre-built [`ResolvedStore`] as the sole layer of a single
+    /// dataset. Used by external producers (e.g. nereid's corpus server) that
+    /// construct their own [`ResolvedStore::Lazy`] via a custom backing.
+    ///
+    /// The dataset, segment, and layer are all named after `dataset_name` /
+    /// the resolved store's recording id; if that conflicts with an existing
+    /// entry, `on_duplicate` decides.
+    pub async fn with_resolved_as_dataset(
+        mut self,
+        dataset_name: EntryName,
+        resolved: ResolvedStore,
+        on_duplicate: IfDuplicateBehavior,
+    ) -> Result<Self, crate::store::Error> {
+        let dataset_id = self.store.create_dataset(dataset_name, None)?;
+        let slot_id = self.store.register_store(&resolved);
+
+        let segment_id = SegmentId::new(resolved.store_id().recording_id().to_string());
+        let dataset = self.store.dataset_mut(dataset_id)?;
+        dataset
+            .add_layer(
+                segment_id,
+                DataSource::DEFAULT_LAYER.to_owned(),
+                slot_id,
+                resolved,
+                on_duplicate,
+            )
+            .await?;
+
+        Ok(self)
     }
 
     pub fn build(self) -> RerunCloudHandler {
@@ -1462,6 +1543,15 @@ impl RerunCloudService for RerunCloudHandler {
                 // Build metadata for all relevant chunks (physical + virtual).
 
                 let metadata_vec: Vec<ChunkMetadata> = if let Some(query) = &query {
+                    // Feed the viewer's cursor to the lazy store so cursor-driven
+                    // eviction (when wired up by the host binary) has fresh
+                    // visibility data without us inventing a new RPC.
+                    if let ResolvedStore::Lazy(lazy) = &resolved
+                        && let Some((timeline, range)) = cursor_from_query(query)
+                    {
+                        lazy.observe_query_cursor(timeline, range);
+                    }
+
                     let (chunks, missing_virtual) =
                         get_chunks_for_query_results(&resolved, &entity_paths, query);
 
@@ -1470,13 +1560,14 @@ impl RerunCloudService for RerunCloudHandler {
                         .map(|c| ChunkMetadata::from_chunk(c))
                         .collect();
                     if let ResolvedStore::Lazy(lazy) = &resolved {
+                        let manifest = lazy.manifest();
                         for chunk_id in &missing_virtual {
                             if let Some(idx) = lazy.chunk_row_index(chunk_id) {
                                 metas.push(ChunkMetadata::from_manifest(
-                                    lazy.manifest(),
+                                    &manifest,
                                     *chunk_id,
                                     idx,
-                                    lazy.timeline_ranges().get(chunk_id),
+                                    lazy.timeline_range(chunk_id),
                                 ));
                             }
                         }
@@ -1489,20 +1580,22 @@ impl RerunCloudService for RerunCloudHandler {
                             .iter_physical_chunks()
                             .map(|c| ChunkMetadata::from_chunk(c))
                             .collect(),
-                        ResolvedStore::Lazy(lazy) => lazy
-                            .manifest()
-                            .col_chunk_ids()
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, &chunk_id)| {
-                                ChunkMetadata::from_manifest(
-                                    lazy.manifest(),
-                                    chunk_id,
-                                    idx,
-                                    lazy.timeline_ranges().get(&chunk_id),
-                                )
-                            })
-                            .collect(),
+                        ResolvedStore::Lazy(lazy) => {
+                            let manifest = lazy.manifest();
+                            manifest
+                                .col_chunk_ids()
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, &chunk_id)| {
+                                    ChunkMetadata::from_manifest(
+                                        &manifest,
+                                        chunk_id,
+                                        idx,
+                                        lazy.timeline_range(&chunk_id),
+                                    )
+                                })
+                                .collect()
+                        }
                     }
                 };
 
@@ -1722,25 +1815,39 @@ impl RerunCloudService for RerunCloudHandler {
             return Err(tonic::Status::invalid_argument("Missing provider details"));
         };
         #[cfg_attr(not(feature = "lance"), expect(unused_variables))]
-        let lance_table = match ProviderDetails::try_from(&provider_details) {
+        let table_url = match ProviderDetails::try_from(&provider_details) {
             Ok(ProviderDetails::LanceTable(lance_table)) => lance_table.table_url,
             Ok(ProviderDetails::SystemTable(_)) => Err(Status::invalid_argument(
                 "System tables cannot be registered",
             ))?,
             Err(err) => return Err(err.into()),
-        }
-        .to_file_path()
-        .map_err(|()| tonic::Status::invalid_argument("Invalid lance table path"))?;
+        };
 
         #[cfg(feature = "lance")]
-        let entry_id = {
+        let entry_id = if table_url.scheme() == "file" {
+            // Local directory — reuse the canonicalize-and-open path so
+            // existence/directory checks stay in place.
+            let path = table_url
+                .to_file_path()
+                .map_err(|()| tonic::Status::invalid_argument("Invalid local lance table path"))?;
             let named_path = NamedPath {
                 name: Some(request.name.clone()),
-                path: lance_table,
+                path,
             };
-
             store
                 .load_directory_as_table(&named_path, IfDuplicateBehavior::Error)
+                .await?
+        } else {
+            // Remote object store (s3://, gs://, az://, …). Credentials
+            // and endpoint overrides come from the server's environment.
+            let storage_options = storage_options_from_env();
+            store
+                .load_url_as_table(
+                    &request.name,
+                    &table_url,
+                    storage_options,
+                    IfDuplicateBehavior::Error,
+                )
                 .await?
         };
 
@@ -2033,9 +2140,32 @@ fn latest_at_or_static(latest_at: &ext::QueryLatestAt) -> LatestAtQuery {
         Some(index) => LatestAtQuery::new(index.clone().into(), latest_at.at),
         None => {
             // Static only data
-            LatestAtQuery::new("".into(), re_log_types::TimeInt::MIN)
+            LatestAtQuery::new("".into(), TimeInt::MIN)
         }
     }
+}
+
+/// Extract a `(timeline, range)` cursor observation from the viewer's
+/// `query_dataset` payload, if one is present on a temporal timeline.
+///
+/// Prefers the explicit range query (the visible viewport) over the
+/// `latest_at` point query — when both are set (the viewer's typical
+/// pattern), the range is the more useful eviction signal. Static-only
+/// queries (no `index`) yield `None` since there's no timeline to
+/// associate the cursor with.
+fn cursor_from_query(query: &ext::Query) -> Option<(TimelineName, AbsoluteTimeRange)> {
+    if let Some(range) = &query.range {
+        return Some((TimelineName::new(&range.index), range.index_range));
+    }
+    if let Some(latest_at) = &query.latest_at
+        && let Some(index) = &latest_at.index
+    {
+        return Some((
+            TimelineName::new(index),
+            AbsoluteTimeRange::point(latest_at.at),
+        ));
+    }
+    None
 }
 
 /// Metadata for a single chunk, extractable from either a physical `Chunk` or a manifest.
@@ -2067,7 +2197,7 @@ impl ChunkMetadata {
         manifest: &re_log_encoding::RrdManifest,
         chunk_id: ChunkId,
         row_idx: usize,
-        chunk_timelines: Option<&IntMap<Timeline, AbsoluteTimeRange>>,
+        chunk_timelines: Option<IntMap<Timeline, AbsoluteTimeRange>>,
     ) -> Self {
         Self {
             chunk_id,
@@ -2077,7 +2207,7 @@ impl ChunkMetadata {
                 .to_owned(),
             is_static: manifest.col_chunk_is_static_raw().value(row_idx),
             byte_size: manifest.col_chunk_byte_size_uncompressed()[row_idx],
-            timelines: chunk_timelines.cloned().unwrap_or_default(),
+            timelines: chunk_timelines.unwrap_or_default(),
         }
     }
 }
@@ -2094,7 +2224,10 @@ fn get_chunks_for_query_results(
     if query.latest_at.is_none() && query.range.is_none() {
         return match resolved {
             ResolvedStore::Eager(h) => (h.read().iter_physical_chunks().cloned().collect(), vec![]),
-            ResolvedStore::Lazy(lazy) => (vec![], lazy.manifest().col_chunk_ids().to_vec()),
+            ResolvedStore::Lazy(lazy) => {
+                let manifest = lazy.manifest();
+                (vec![], manifest.col_chunk_ids().to_vec())
+            }
         };
     }
 

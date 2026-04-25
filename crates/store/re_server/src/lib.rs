@@ -17,6 +17,7 @@ pub use self::rerun_cloud::{
     RerunCloudHandler, RerunCloudHandlerBuilder, RerunCloudHandlerSettings,
 };
 pub use self::server::{Server, ServerBuilder, ServerError, ServerHandle};
+pub use self::store::ResolvedStore;
 
 /// What should we do on error?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

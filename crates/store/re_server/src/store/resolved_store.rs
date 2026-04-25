@@ -5,7 +5,7 @@ use arrow::array::RecordBatch;
 use nohash_hasher::IntSet;
 use re_chunk_store::{
     Chunk, ChunkId, ChunkStore, ChunkStoreHandle, ChunkStoreHandleWeak, ChunkTrackingMode,
-    LazyRrdStore, QueryResults, StoreSchema,
+    LazyRrdStore, LazyStore, QueryResults, StoreSchema,
 };
 use re_log_encoding::RrdManifest;
 use re_log_types::{EntityPath, StoreId, StoreKind};
@@ -18,8 +18,10 @@ pub enum ResolvedStore {
     /// Fully in-memory store (e.g. from `write_chunks` or legacy RRD without footer).
     Eager(ChunkStoreHandle),
 
-    /// File-backed store with on-demand chunk loading.
-    Lazy(Arc<LazyRrdStore>),
+    /// Store with virtual index loaded up front and physical chunks loaded
+    /// on demand. The backing can be an RRD file, a Lance + S3 corpus
+    /// producer, or any other [`LazyStore`] implementor.
+    Lazy(Arc<dyn LazyStore>),
 }
 
 impl ResolvedStore {
@@ -97,7 +99,7 @@ impl ResolvedStore {
         }
     }
 
-    pub fn manifest(&self) -> Option<&Arc<RrdManifest>> {
+    pub fn manifest(&self) -> Option<Arc<RrdManifest>> {
         match self {
             Self::Eager(_) => None,
             Self::Lazy(l) => Some(l.manifest()),
@@ -117,6 +119,12 @@ impl ResolvedStore {
             Self::Eager(h) => ResolvedStoreWeak::Eager(h.downgrade()),
             Self::Lazy(l) => ResolvedStoreWeak::Lazy(Arc::downgrade(l)),
         }
+    }
+
+    /// Wrap a generic [`LazyStore`] (any `Arc<impl LazyStore>` or
+    /// `Arc<dyn LazyStore>`) as a [`ResolvedStore::Lazy`].
+    pub fn from_lazy<L: LazyStore>(lazy: Arc<L>) -> Self {
+        Self::Lazy(lazy as Arc<dyn LazyStore>)
     }
 
     /// Load an RRD file as one or more [`ResolvedStore`]s, one per store found in the file.
@@ -140,7 +148,7 @@ impl ResolvedStore {
                     continue;
                 }
                 let store_file = std::fs::File::open(path)?;
-                let lazy = Arc::new(
+                let lazy: Arc<dyn LazyStore> = Arc::new(
                     LazyRrdStore::try_new(store_file, path.to_owned(), Arc::new(raw_manifest))
                         .map_err(|err| super::Error::RrdLoadingError(err.into()))?,
                 );
@@ -167,7 +175,7 @@ impl ResolvedStore {
 /// Weak counterpart of [`ResolvedStore`], held by [`StorePool`](super::store_pool::StorePool).
 pub(crate) enum ResolvedStoreWeak {
     Eager(ChunkStoreHandleWeak),
-    Lazy(std::sync::Weak<LazyRrdStore>),
+    Lazy(std::sync::Weak<dyn LazyStore>),
 }
 
 impl ResolvedStoreWeak {

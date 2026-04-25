@@ -1,0 +1,52 @@
+[package]
+name = "re_corpus_producer"
+authors.workspace = true
+description = "ChunkProvider implementation backed by a Lance corpus index + S3-stored Opus chunks"
+edition.workspace = true
+homepage.workspace = true
+include.workspace = true
+license.workspace = true
+publish = false
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+re_byte_size.workspace = true
+re_chunk.workspace = true
+re_chunk_store.workspace = true
+re_log = { workspace = true, features = ["setup"] }
+re_log_encoding = { workspace = true, features = ["decoder", "encoder"] }
+re_log_types.workspace = true
+re_sdk_types.workspace = true
+re_sorbet.workspace = true
+re_tracing.workspace = true
+re_types_core.workspace = true
+
+ahash.workspace = true
+anyhow.workspace = true
+arrow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+datafusion.workspace = true
+futures.workspace = true
+lance = { workspace = true, features = ["aws", "gcp", "azure"] }
+object_store = { version = "0.12", features = ["aws", "gcp", "azure"] }
+ogg = "0.9"
+parking_lot = { workspace = true, features = ["arc_lock"] }
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

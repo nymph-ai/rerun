@@ -76,7 +76,8 @@ impl Layer {
 
             ResolvedStore::Lazy(l) => {
                 let header = re_log_encoding::MessageHeader::ENCODED_SIZE_BYTES as u64;
-                l.manifest()
+                let manifest = l.manifest();
+                manifest
                     .col_chunk_byte_size()
                     .iter()
                     .map(|size| size + header)
@@ -119,9 +120,9 @@ impl Layer {
 
     fn rrd_manifest_from_lazy_cache(
         &self,
-        lazy: &Arc<re_chunk_store::LazyRrdStore>,
+        lazy: &Arc<dyn re_chunk_store::LazyStore>,
     ) -> Result<RawRrdManifest, super::Error> {
-        let mut manifest = (**lazy.raw_manifest()).clone();
+        let mut manifest = (*lazy.raw_manifest()).clone();
 
         let chunk_keys = manifest
             .col_chunk_id()
@@ -204,7 +205,8 @@ impl Layer {
             }
             ResolvedStore::Lazy(l) => {
                 let mut ranges = BTreeMap::new();
-                for per_entity in l.manifest().temporal_map().values() {
+                let manifest = l.manifest();
+                for per_entity in manifest.temporal_map().values() {
                     for (timeline, per_component) in per_entity {
                         for per_chunk in per_component.values() {
                             for entry in per_chunk.values() {

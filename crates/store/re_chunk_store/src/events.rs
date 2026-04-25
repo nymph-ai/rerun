@@ -567,6 +567,10 @@ pub enum ChunkDeletionReason {
 
     /// Explicitly dropped by user action (e.g. undo/redo stack operations).
     ExplicitDrop,
+
+    /// Evicted from the physical working set while still recoverable from the
+    /// virtual manifest (e.g. cursor-driven eviction in lazy/streaming stores).
+    Evicted,
 }
 
 /// An atomic deletion event.
