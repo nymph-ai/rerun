@@ -1384,21 +1384,25 @@ impl RerunCloudService for RerunCloudHandler {
         // call clones the underlying lazy layers' raw manifests (which now
         // reflect any rows the live-edge poller has absorbed since the last
         // emit) and merges them under the segment-scoped store id.
-        let rebuild = move |layers: &[crate::store::Layer]| -> tonic::Result<GetRrdManifestResponse> {
-            let per_layer: Vec<re_log_encoding::RawRrdManifest> = layers
-                .iter()
-                .map(|layer| layer.rrd_manifest())
-                .collect::<Result<_, _>>()?;
-            let merged = re_log_encoding::RawRrdManifest::merge(segment_store_id.clone(), per_layer)
-                .map_err(|err| {
-                    tonic::Status::internal(format!("Unable to merge RRD manifest: {err:#}"))
-                })?;
-            Ok(GetRrdManifestResponse {
-                rrd_manifest: Some(merged.to_transport(()).map_err(|err| {
-                    tonic::Status::internal(format!("Unable to encode RRD manifest: {err:#}"))
-                })?),
-            })
-        };
+        let rebuild =
+            move |layers: &[crate::store::Layer]| -> tonic::Result<GetRrdManifestResponse> {
+                let per_layer: Vec<re_log_encoding::RawRrdManifest> = layers
+                    .iter()
+                    .map(|layer| layer.rrd_manifest())
+                    .collect::<Result<_, _>>()?;
+                let merged =
+                    re_log_encoding::RawRrdManifest::merge(segment_store_id.clone(), per_layer)
+                        .map_err(|err| {
+                            tonic::Status::internal(format!(
+                                "Unable to merge RRD manifest: {err:#}"
+                            ))
+                        })?;
+                Ok(GetRrdManifestResponse {
+                    rrd_manifest: Some(merged.to_transport(()).map_err(|err| {
+                        tonic::Status::internal(format!("Unable to encode RRD manifest: {err:#}"))
+                    })?),
+                })
+            };
 
         let stream = async_stream::try_stream! {
             // Initial snapshot. The receive side flips RedapConnectionState

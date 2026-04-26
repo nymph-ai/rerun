@@ -19,6 +19,7 @@ name = "nereid-corpus-server"
 path = "src/main.rs"
 
 [dependencies]
+re_build_info.workspace = true
 re_chunk_store.workspace = true
 re_corpus_producer.workspace = true
 re_grpc_server.workspace = true
@@ -27,6 +28,7 @@ re_protos.workspace = true
 re_server.workspace = true
 
 anyhow.workspace = true
+axum.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tracing.workspace = true

@@ -278,6 +278,10 @@ async fn main() -> anyhow::Result<()> {
     let server = ServerBuilder::default()
         .with_address(bind_addr)
         .with_service(cloud_server)
+        .with_http_route(
+            "/version",
+            axum::routing::get(async move || re_build_info::build_info!().to_string()),
+        )
         .build();
 
     let mut handle = server.start().await.context("starting Redap server")?;
