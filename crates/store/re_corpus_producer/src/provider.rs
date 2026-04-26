@@ -142,9 +142,12 @@ impl LanceCorpusProvider {
             ChunkKind::Segment => {
                 let s3 = self.s3.clone();
                 let row = entry.row.clone();
-                let bytes = self.runtime.block_on(async move {
-                    s3.get_object(&row.s3_bucket, &row.s3_key, row.sha256.as_deref())
-                        .await
+                let runtime = Arc::clone(&self.runtime);
+                let bytes = tokio::task::block_in_place(move || {
+                    runtime.block_on(async move {
+                        s3.get_object(&row.s3_bucket, &row.s3_key, row.sha256.as_deref())
+                            .await
+                    })
                 })?;
                 let packets = demux_ogg_opus(&bytes)?;
                 let chunk = build_segment_chunk(&entry.row, entry.chunk_id, packets)?;
