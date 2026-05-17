@@ -99,7 +99,9 @@ fn opus_packet_duration_samples(packet: &[u8]) -> Option<u64> {
             // packets; on truly invalid TOCs we punt to caller.
             let b1 = *packet.get(1)?;
             let n = (b1 & 0x3F) as u64;
-            if n == 0 { return None; }
+            if n == 0 {
+                return None;
+            }
             n
         }
         _ => unreachable!(),
@@ -112,15 +114,41 @@ fn opus_frame_size_samples(config: u8) -> Option<u64> {
     // SILK NB/MB/WB
     let size = match config {
         // SILK NB/MB/WB: 10/20/40/60 ms
-        0..=2 => match config % 4 { 0 => 480, 1 => 960, 2 => 1920, _ => 2880 },
+        0..=2 => match config % 4 {
+            0 => 480,
+            1 => 960,
+            2 => 1920,
+            _ => 2880,
+        },
         3 => 2880,
-        4..=7 => match config % 4 { 0 => 480, 1 => 960, 2 => 1920, _ => 2880 },
-        8..=11 => match config % 4 { 0 => 480, 1 => 960, 2 => 1920, _ => 2880 },
+        4..=7 => match config % 4 {
+            0 => 480,
+            1 => 960,
+            2 => 1920,
+            _ => 2880,
+        },
+        8..=11 => match config % 4 {
+            0 => 480,
+            1 => 960,
+            2 => 1920,
+            _ => 2880,
+        },
         // Hybrid SWB/FB: 10/20 ms
-        12..=13 => match config % 2 { 0 => 480, _ => 960 },
-        14..=15 => match config % 2 { 0 => 480, _ => 960 },
+        12..=13 => match config % 2 {
+            0 => 480,
+            _ => 960,
+        },
+        14..=15 => match config % 2 {
+            0 => 480,
+            _ => 960,
+        },
         // CELT NB/WB/SWB/FB: 2.5/5/10/20 ms
-        16..=31 => match config % 4 { 0 => 120, 1 => 240, 2 => 480, _ => 960 },
+        16..=31 => match config % 4 {
+            0 => 120,
+            1 => 240,
+            2 => 480,
+            _ => 960,
+        },
         _ => return None,
     };
     Some(size)

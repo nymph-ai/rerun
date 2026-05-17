@@ -28,7 +28,6 @@ pub struct PyParquetReaderInternal {
 #[pymethods]
 impl PyParquetReaderInternal {
     #[new]
-    #[expect(clippy::too_many_arguments)]
     #[pyo3(
         signature = (
             path,

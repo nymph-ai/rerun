@@ -151,7 +151,11 @@ fn nullable_str(arr: &StringArray, i: usize) -> Option<String> {
         None
     } else {
         let s = arr.value(i);
-        if s.is_empty() { None } else { Some(s.to_owned()) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_owned())
+        }
     }
 }
 

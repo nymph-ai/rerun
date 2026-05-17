@@ -108,7 +108,7 @@ jobs:
           pixi run python scripts/ci/crates.py check-git-branch-name
 
           echo Parse the release version from the branch name…
-          #   `prepare-release-0.8.1-meta.N` -> `0.8.1`
+          #   `prepare-release-0.8.1-alpha.N` -> `0.8.1`
           release_version=$(pixi run python scripts/ci/crates.py get-version --from git --finalize)
 
           echo "release_version: $release_version"
@@ -207,7 +207,7 @@ jobs:
           ### Next steps
           - Test the release
           - For alpha releases:
-            - [ ] If a GH release should be published for this alpha (give extra love to alphas deployed to Rerun Cloud or when external testing is required):
+            - [ ] If a GH release should be published for this alpha (give extra love to alphas deployed to Rerun Hub or when external testing is required):
                 - [ ] Create the GitHub release manually from the UI
                 - [ ] Stretch goal: generate a raw changelog and add it to the GH release with this disclaimer:
                       **DISCLAIMER**: This is an unreviewed, automatically generated changelog. We only provide fully reviewed changelogs for final releases.
@@ -216,7 +216,7 @@ jobs:
               - Otherwise, close the PR without merging. Cherrypick any interesting commit to `main`, but *not* the version bump one (it would introduce bad links).
           - For non-alpha releases:
             - For any added commits, run the release workflow in 'rc' mode again
-            - After testing, _ensure that this PR is mergeable to `main`_, then run the release workflow in 'release' mode
+            - After testing, _ensure that this PR is mergeable to `main`_, then run the release workflow in 'final' mode
             - Once the final release workflow finishes it will create a GitHub release for you. Then:
               - [ ] Sanity check the build artifacts:
                 - [ ] pip install: does it install and run?
@@ -229,7 +229,7 @@ jobs:
                 - Click `Publish release`
                 - Once published, the release assets will sync to it automatically.
               - [ ] Update the [google colab notebooks](https://colab.research.google.com/drive/1R9I7s4o6wydQC_zkybqaSRFTtlEaked_) to install this version and re-execute the notebook.
-              - [ ] Release a new version of gradio (@oxkitsune, @jprochazk)
+              - [ ] Verify the auto-triggered [gradio-rerun-viewer release workflow](https://github.com/rerun-io/gradio-rerun-viewer/actions/workflows/auto_release_on_rerun.yml) succeeded (dispatched from `on_gh_release.yml` for final releases)
               - [ ] Create a new branch from the prepare-release branch, rebase that one on main and sync it to reality so it can be merged.
               - [ ] (A few hours later) Check on the [conda feedstock PR](https://github.com/conda-forge/rerun-sdk-feedstock/pulls) (ping Antoine, Nick and/or Jeremy in necessary)
 

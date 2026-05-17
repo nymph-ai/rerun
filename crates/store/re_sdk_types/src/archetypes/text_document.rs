@@ -30,7 +30,8 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Markdown text document
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_text_document").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_text_document")
+///         .spawn()?;
 ///
 ///     rec.log(
 ///         "text_document",

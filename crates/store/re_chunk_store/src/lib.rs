@@ -25,11 +25,10 @@ mod gc;
 #[cfg(not(target_arch = "wasm32"))]
 mod lazy_chunk_store;
 #[cfg(not(target_arch = "wasm32"))]
-mod lazy_rrd_store;
-#[cfg(not(target_arch = "wasm32"))]
 mod lazy_store;
 mod lineage;
 mod missing_chunk_reporter;
+mod profile;
 mod properties;
 mod query;
 mod rebatch_videos;
@@ -65,7 +64,8 @@ pub use self::events::{
 pub use self::gc::{GarbageCollectionOptions, GarbageCollectionTarget};
 pub use self::lineage::{ChunkDirectLineage, ChunkDirectLineageReport};
 pub use self::missing_chunk_reporter::MissingChunkReporter;
-pub use self::properties::ExtractPropertiesError;
+pub use self::profile::OptimizationProfile;
+pub use self::properties::{ExtractPropertiesError, extract_properties_from_chunks};
 pub use self::query::QueryResults;
 pub use self::stats::{ChunkStoreChunkStats, ChunkStoreStats};
 pub use self::store::{
@@ -81,9 +81,7 @@ pub use self::chunk_provider::ChunkProvider;
 #[cfg(not(target_arch = "wasm32"))]
 pub use self::lazy_chunk_store::{EvictionStats, LazyChunkStore};
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::lazy_rrd_store::LazyRrdStore;
-#[cfg(not(target_arch = "wasm32"))]
-pub use self::lazy_store::LazyStore;
+pub use self::lazy_store::{LazyStore, LazyStoreLike};
 
 pub(crate) use self::store::ColumnMetadataState;
 
@@ -103,6 +101,9 @@ pub enum ChunkStoreError {
 
     #[error("Failed to load data, parsing error: {0:#}")]
     Codec(#[from] re_log_encoding::CodecError),
+
+    #[error(transparent)]
+    Provider(#[from] re_log_encoding::ChunkProviderError),
 
     #[error("Failed to load data, semantic error: {0:#}")]
     Sorbet(#[from] re_sorbet::SorbetError),

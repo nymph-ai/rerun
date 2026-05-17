@@ -9,6 +9,10 @@ client.send_table(
     "Hello from Python",
     pa.RecordBatch.from_pydict({
         "id": [1, 2, 3],
-        "url": ["https://www.rerun.io", "https://github.com/rerun-io/rerun", "https://crates.io/crates/rerun"],
+        "url": [
+            "https://www.rerun.io",
+            "https://github.com/rerun-io/rerun",
+            "https://crates.io/crates/rerun",
+        ],
     }),
 )

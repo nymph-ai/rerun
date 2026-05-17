@@ -32,6 +32,8 @@ pub fn concat_polymorphic_batches(batches: &[RecordBatch]) -> arrow::error::Resu
         return Ok(RecordBatch::new_empty(Arc::new(Schema::empty())));
     }
 
+    re_tracing::profile_function!();
+
     let schema_merged = {
         let mut schema_builder = SchemaBuilder::new();
         for batch in batches {

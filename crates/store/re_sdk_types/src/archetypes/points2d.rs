@@ -30,18 +30,22 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rand::prelude::*;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_points2d_random").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_points2d_random")
+///             .spawn()?;
 ///
 ///     let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
 ///     let dist = rand::distr::Uniform::new(-3., 3.)?;
 ///
 ///     rec.log(
 ///         "random",
-///         &rerun::Points2D::new((0..10).map(|_| (rng.sample(dist), rng.sample(dist))))
-///             .with_colors(
-///                 (0..10).map(|_| rerun::Color::from_rgb(rng.random(), rng.random(), rng.random())),
-///             )
-///             .with_radii((0..10).map(|_| rng.random::<f32>())),
+///         &rerun::Points2D::new(
+///             (0..10).map(|_| (rng.sample(dist), rng.sample(dist))),
+///         )
+///         .with_colors((0..10).map(|_| {
+///             rerun::Color::from_rgb(rng.random(), rng.random(), rng.random())
+///         }))
+///         .with_radii((0..10).map(|_| rng.random::<f32>())),
 ///     )?;
 ///
 ///     // TODO(#5521): log VisualBounds2D
@@ -62,7 +66,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Log points with radii given in UI points
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_points2d_ui_radius").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_points2d_ui_radius")
+///             .spawn()?;
 ///
 ///     // Two blue points with scene unit radii of 0.1 and 0.3.
 ///     rec.log(

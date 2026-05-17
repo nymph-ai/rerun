@@ -4,10 +4,10 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use nohash_hasher::IntSet;
 use re_chunk_store::{
-    Chunk, ChunkId, ChunkStore, ChunkStoreHandle, ChunkStoreHandleWeak, ChunkTrackingMode,
-    LazyRrdStore, LazyStore, QueryResults, StoreSchema,
+    ChunkStore, ChunkStoreHandle, ChunkStoreHandleWeak, ChunkTrackingMode, LazyStore,
+    LazyStoreLike, QueryResults, StoreSchema,
 };
-use re_log_encoding::RrdManifest;
+use re_log_encoding::{RrdChunkProvider, RrdManifest};
 use re_log_types::{EntityPath, StoreId, StoreKind};
 
 /// A store backend: either an in-memory eager store or a file-backed lazy store.
@@ -18,10 +18,8 @@ pub enum ResolvedStore {
     /// Fully in-memory store (e.g. from `write_chunks` or legacy RRD without footer).
     Eager(ChunkStoreHandle),
 
-    /// Store with virtual index loaded up front and physical chunks loaded
-    /// on demand. The backing can be an RRD file, a Lance + S3 corpus
-    /// producer, or any other [`LazyStore`] implementor.
-    Lazy(Arc<dyn LazyStore>),
+    /// Manifest-backed store with on-demand chunk loading.
+    Lazy(Arc<dyn LazyStoreLike>),
 }
 
 impl ResolvedStore {
@@ -43,13 +41,6 @@ impl ResolvedStore {
         match self {
             Self::Eager(h) => h.read().all_entities(),
             Self::Lazy(l) => l.all_entities(),
-        }
-    }
-
-    pub fn physical_chunk(&self, id: &ChunkId) -> Option<Arc<Chunk>> {
-        match self {
-            Self::Eager(h) => h.read().physical_chunk(id).cloned(),
-            Self::Lazy(l) => l.physical_chunk(id),
         }
     }
 
@@ -106,21 +97,19 @@ impl ResolvedStore {
         }
     }
 
-    /// Subscribe to manifest-version bumps for live-tail backings. Eager
-    /// stores and static lazy backings (plain RRD files) return `None`.
-    pub fn subscribe_manifest_updates(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
-        match self {
-            Self::Eager(_) => None,
-            Self::Lazy(l) => l.subscribe_manifest_updates(),
-        }
-    }
-
     pub fn extract_properties(&self) -> Result<RecordBatch, super::Error> {
         match self {
             Self::Eager(h) => h.read().extract_properties(),
             Self::Lazy(l) => l.extract_properties(),
         }
         .map_err(super::Error::failed_to_extract_properties)
+    }
+
+    pub fn subscribe_manifest_updates(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        match self {
+            Self::Eager(_) => None,
+            Self::Lazy(l) => l.subscribe_manifest_updates(),
+        }
     }
 
     pub(crate) fn downgrade(&self) -> ResolvedStoreWeak {
@@ -130,10 +119,9 @@ impl ResolvedStore {
         }
     }
 
-    /// Wrap a generic [`LazyStore`] (any `Arc<impl LazyStore>` or
-    /// `Arc<dyn LazyStore>`) as a [`ResolvedStore::Lazy`].
-    pub fn from_lazy<L: LazyStore>(lazy: Arc<L>) -> Self {
-        Self::Lazy(lazy as Arc<dyn LazyStore>)
+    /// Wrap a custom lazy backing as a [`ResolvedStore::Lazy`].
+    pub fn from_lazy<L: LazyStoreLike>(lazy: Arc<L>) -> Self {
+        Self::Lazy(lazy as Arc<dyn LazyStoreLike>)
     }
 
     /// Load an RRD file as one or more [`ResolvedStore`]s, one per store found in the file.
@@ -148,7 +136,7 @@ impl ResolvedStore {
         let mut file = std::fs::File::open(path)?;
 
         if let Ok(Some(footer)) = re_log_encoding::read_rrd_footer(&mut file) {
-            // The footer-reading handle is no longer needed — each `LazyRrdStore` holds its own.
+            // The footer-reading handle is no longer needed — each `LazyStore` holds its own.
             drop(file);
 
             let mut out = Vec::with_capacity(footer.manifests.len());
@@ -157,11 +145,12 @@ impl ResolvedStore {
                     continue;
                 }
                 let store_file = std::fs::File::open(path)?;
-                let lazy: Arc<dyn LazyStore> = Arc::new(
-                    LazyRrdStore::try_new(store_file, path.to_owned(), Arc::new(raw_manifest))
+                let provider = Arc::new(
+                    RrdChunkProvider::try_from_file(store_file, path, Arc::new(raw_manifest))
                         .map_err(|err| super::Error::RrdLoadingError(err.into()))?,
                 );
-                out.push((store_id, Self::Lazy(lazy)));
+                let lazy = Arc::new(LazyStore::new(provider));
+                out.push((store_id, Self::from_lazy(lazy)));
             }
             Ok(out)
         } else {
@@ -184,7 +173,7 @@ impl ResolvedStore {
 /// Weak counterpart of [`ResolvedStore`], held by [`StorePool`](super::store_pool::StorePool).
 pub(crate) enum ResolvedStoreWeak {
     Eager(ChunkStoreHandleWeak),
-    Lazy(std::sync::Weak<dyn LazyStore>),
+    Lazy(std::sync::Weak<dyn LazyStoreLike>),
 }
 
 impl ResolvedStoreWeak {

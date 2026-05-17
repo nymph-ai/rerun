@@ -327,7 +327,7 @@ fn build_view_contents(
 }
 
 /// Build a table provider for dataframe queries with the given parameters.
-#[expect(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[expect(clippy::fn_params_excessive_bools)]
 fn build_dataframe_query_table_provider(
     py: Python<'_>,
     dataset: &Py<PyDatasetEntryInternal>,
@@ -407,6 +407,14 @@ fn build_dataframe_query_table_provider(
     let index_values = using_index_values.map(Arc::new);
     // Reuse the already-fetched schema so the provider skips its own `GetDatasetSchema` RPC.
     let arrow_schema = Some(schema);
+
+    // Bind any active `query_metrics()` collectors to this query at plan
+    // construction time. Empty when no scope is open; the read traverses the
+    // Python `ContextVar` so only collectors from this thread/task are
+    // captured. Concurrent or unrelated queries elsewhere in the process are
+    // not affected.
+    let metrics_collectors = crate::query_metrics::active_metrics_collectors(py);
+
     wait_for_future(py, async move {
         DataframeQueryTableProvider::new(
             connection.origin().clone(),
@@ -418,6 +426,7 @@ fn build_dataframe_query_table_provider(
             arrow_schema,
             #[cfg(not(target_arch = "wasm32"))]
             trace_headers_opt,
+            metrics_collectors,
         )
         .await
     })

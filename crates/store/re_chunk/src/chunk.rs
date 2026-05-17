@@ -527,6 +527,13 @@ impl Chunk {
     pub fn clone_with_new_id(&self) -> Self {
         self.clone_with_id(ChunkId::new())
     }
+
+    #[inline]
+    pub fn clone_with_new_entity_path(&self, entity_path: EntityPath) -> Self {
+        let mut chunk = self.clone_with_id(ChunkId::new());
+        chunk.entity_path = entity_path;
+        chunk
+    }
 }
 
 impl Chunk {
@@ -792,7 +799,7 @@ impl Chunk {
 
         let row_ids = self.row_ids().collect_vec();
 
-        if self.is_sorted() {
+        if self.is_row_ids_sorted() {
             self.components
                 .iter()
                 .filter_map(|(component, column)| {
@@ -906,7 +913,7 @@ impl Chunk {
             components,
         };
 
-        chunk.is_sorted = is_sorted.unwrap_or_else(|| chunk.is_sorted_uncached());
+        chunk.is_sorted = is_sorted.unwrap_or_else(|| chunk.is_row_ids_sorted_uncached());
 
         chunk.sanity_check()?;
 
@@ -940,27 +947,82 @@ impl Chunk {
     /// This will fail if the passed in data is malformed in any way -- see [`Self::sanity_check`]
     /// for details.
     ///
-    /// The data is assumed to be sorted in `RowId`-order. Sequential `RowId`s will be generated for each
-    /// row in the chunk.
+    /// The input order will NOT be respected.
+    /// The rows will be stably reordered so that the time columns are non-decreasing
+    /// (lexicographically across timelines, in deterministic timeline-name order).
+    /// Sequential `RowId`s are then assigned to the reordered rows.
+    /// This makes it less likely that we end up with "out-of-order" chunks
+    /// (chunks where some time columns are not sorted with respect to `RowId`).
     pub fn from_auto_row_ids(
         id: ChunkId,
         entity_path: EntityPath,
         timelines: IntMap<TimelineName, TimeColumn>,
         components: ChunkComponents,
     ) -> ChunkResult<Self> {
+        re_tracing::profile_function!();
+
         let count = components
             .list_arrays()
             .next()
             .map_or(0, |list_array| list_array.len());
 
-        let row_ids = auto_row_ids(id, count);
+        // Compute a stable permutation that lexicographically sorts the rows by their
+        // time-column values. We pick a deterministic timeline order (sorted by name) so the
+        // result does not depend on `IntMap` iteration order.
+        let timeline_order: Vec<TimelineName> = timelines.keys().copied().sorted().collect();
 
-        Self::new(id, entity_path, Some(true), row_ids, timelines, components)
+        let mut swaps: Vec<usize> = (0..count).collect();
+        swaps.sort_by(|&a, &b| {
+            for name in &timeline_order {
+                let times = timelines[name].times_raw();
+                let ord = times[a].cmp(&times[b]);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+
+        // Build the chunk with placeholder sequential row_ids, then permute everything via
+        // `shuffle_with`, then reassign sequential row_ids so the chunk is RowId-sorted again.
+        let placeholder_row_ids = auto_row_ids(id, count);
+        let mut chunk = Self::new(
+            id,
+            entity_path,
+            Some(true),
+            placeholder_row_ids,
+            timelines,
+            components,
+        )?;
+
+        let already_sorted = swaps
+            .iter()
+            .copied()
+            .enumerate()
+            .all(|(to, from)| to == from);
+        if !already_sorted {
+            chunk.shuffle_with(&swaps);
+            chunk.row_ids = auto_row_ids(chunk.id, count);
+            chunk.is_sorted = true;
+
+            #[cfg(debug_assertions)]
+            #[expect(clippy::unwrap_used)] // dev only
+            chunk.sanity_check().unwrap();
+        }
+
+        Ok(chunk)
     }
 
     /// Creates a new [`Chunk`] from columnar data.
     ///
     /// Pass an empty iterator for `timelines` to create static data.
+    ///
+    /// The input order will NOT be respected.
+    /// The rows will be stably reordered so that the time columns are non-decreasing
+    /// (lexicographically across timelines, in deterministic timeline-name order).
+    /// Sequential `RowId`s are then assigned to the reordered rows.
+    /// This makes it less likely that we end up with "out-of-order" chunks
+    /// (chunks where some time columns are not sorted with respect to `RowId`).
     pub fn from_columns(
         entity_path: impl Into<EntityPath>,
         timelines: impl IntoIterator<Item = TimeColumn>,
@@ -1340,6 +1402,19 @@ impl Chunk {
         self.row_ids_slice().iter().copied()
     }
 
+    /// Find the row index of the given [`RowId`] in this chunk, if it is present.
+    ///
+    /// Uses a binary search on sorted chunks (the common case), falling back to
+    /// a linear scan otherwise.
+    #[inline]
+    pub fn row_index_of(&self, row_id: RowId) -> Option<usize> {
+        if self.is_row_ids_sorted() {
+            self.row_ids_slice().binary_search(&row_id).ok()
+        } else {
+            self.row_ids_slice().iter().position(|r| *r == row_id)
+        }
+    }
+
     /// Returns an iterator over the [`RowId`]s of a [`Chunk`], for a given component.
     ///
     /// This is different than [`Self::row_ids`]: it will only yield `RowId`s for rows at which
@@ -1380,7 +1455,7 @@ impl Chunk {
         let row_ids = self.row_ids_slice();
 
         #[expect(clippy::unwrap_used)] // checked above
-        Some(if self.is_sorted() {
+        Some(if self.is_row_ids_sorted() {
             (
                 row_ids.first().copied().unwrap(),
                 row_ids.last().copied().unwrap(),
@@ -1654,6 +1729,44 @@ impl re_byte_size::SizeBytes for TimeColumn {
 // --- Sanity checks ---
 
 impl Chunk {
+    /// Warn if we find out-of-order timelines.
+    ///
+    /// If `RERUN_VERY_STRICT` is set, this will instead panic.
+    ///
+    /// This assumes the chunk is already sorted by `RowId`, like most chunks.
+    ///
+    /// Out-of-order timelines are sometimes unavoidable,
+    /// but if we can avoid them we absolutely should,
+    /// because they cause much slower queries
+    #[track_caller]
+    pub fn warn_if_out_of_order(&self) {
+        if !self.is_row_ids_sorted() {
+            // Big problem!
+            if re_log::is_rerun_very_strict() {
+                panic!("Found chunk that wasn't sorted by RowId. This is a bug");
+            } else {
+                re_log::debug_warn_once!("Found chunk that wasn't sorted by RowId. This is a bug");
+            }
+        }
+
+        let unsorted_timelines = self.unsorted_timelines();
+        if !unsorted_timelines.is_empty() {
+            if re_log::is_rerun_very_strict() {
+                panic!(
+                    "Found out-of-order timelines for entity '{}': {:?}. Out-of-order timelines are sometimes unavoidable, but they may cause performance problems",
+                    self.entity_path,
+                    self.unsorted_timelines()
+                );
+            } else {
+                re_log::debug_warn_once!(
+                    "Found out-of-order timelines for entity '{}': {:?}. Out-of-order timelines are sometimes unavoidable, but they may cause performance problems",
+                    self.entity_path,
+                    self.unsorted_timelines()
+                );
+            }
+        }
+    }
+
     /// Returns an error if the Chunk's invariants are not upheld.
     ///
     /// Costly checks are only run in debug builds.
@@ -1670,6 +1783,8 @@ impl Chunk {
             timelines,
             components,
         } = self;
+
+        self.warn_if_out_of_order();
 
         if cfg!(debug_assertions) {
             let measured = self.heap_size_bytes_inner();
@@ -1700,7 +1815,7 @@ impl Chunk {
 
             #[expect(clippy::collapsible_if)] // readability
             if cfg!(debug_assertions) {
-                if *is_sorted != self.is_sorted_uncached() {
+                if *is_sorted != self.is_row_ids_sorted_uncached() {
                     return Err(ChunkError::Malformed {
                         reason: format!(
                             "Chunk is marked as {}sorted but isn't: {row_ids:?}",

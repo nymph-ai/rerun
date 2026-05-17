@@ -30,6 +30,7 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+
 [package.metadata.cargo-shear]
 ignored-paths = ["data/quick_start_guides/*.rs"]
 
@@ -103,7 +104,7 @@ re_view_bar_chart.workspace = true
 re_view_dataframe.workspace = true
 re_view_graph.workspace = true
 re_view_spatial.workspace = true
-re_view_status.workspace = true
+re_view_state_timeline.workspace = true
 re_view_tensor.workspace = true
 re_view_text_document.workspace = true
 re_view_text_log.workspace = true

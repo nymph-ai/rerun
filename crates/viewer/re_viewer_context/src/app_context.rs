@@ -21,6 +21,7 @@ use crate::{
 /// This context, in difference to [`crate::ViewerContext`] can exist for
 /// any arbitrary state of the viewer. And not only when there is an open
 /// recording.
+#[derive(Clone)]
 pub struct AppContext<'a> {
     /// Set during tests (e.g. snapshot tests).
     ///
@@ -83,7 +84,7 @@ pub struct AppContext<'a> {
     /// Where we are getting our data from.
     pub connected_receivers: &'a re_log_channel::LogReceiverSet,
 
-    /// Are we logged in to rerun cloud?
+    /// Are we logged in to Rerun Hub?
     pub auth_context: Option<&'a AuthContext>,
 
     /// Whether `OAuth` login is enabled in this viewer instance.
@@ -138,7 +139,7 @@ impl AppContext<'_> {
     /// The current active Redap entry id, if any.
     pub fn active_redap_entry(&self) -> Option<re_log_types::EntryId> {
         match self.route {
-            Route::RedapEntry(entry) => Some(entry.entry_id),
+            Route::RedapEntry { kind, .. } => kind.entry_id(),
             _ => None,
         }
     }

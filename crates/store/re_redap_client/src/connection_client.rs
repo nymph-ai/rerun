@@ -16,19 +16,21 @@ use re_protos::cloud::v1alpha1::ext::{
 };
 use re_protos::cloud::v1alpha1::rerun_cloud_service_client::RerunCloudServiceClient;
 use re_protos::cloud::v1alpha1::{
-    CreateDatasetEntryRequest, DeleteEntryRequest, EntryFilter, EntryKind, FetchChunksRequest,
-    FindEntriesRequest, GetDatasetManifestSchemaRequest, GetDatasetManifestSchemaResponse,
-    GetDatasetSchemaRequest, GetRrdManifestResponse, GetSegmentTableSchemaRequest,
-    GetSegmentTableSchemaResponse, QueryDatasetResponse, QueryTasksOnCompletionResponse,
-    QueryTasksResponse, ReadDatasetEntryRequest, ReadTableEntryRequest,
-    RegisterWithDatasetResponse, ScanSegmentTableRequest, ScanSegmentTableResponse,
-    UnregisterFromDatasetResponse, VersionRequest, WriteTableRequest,
+    CancelTasksRequest, CreateDatasetEntryRequest, DeleteEntryRequest, EntryFilter, EntryKind,
+    FetchChunksRequest, FindEntriesRequest, GetDatasetManifestSchemaRequest,
+    GetDatasetManifestSchemaResponse, GetDatasetSchemaRequest, GetRrdManifestResponse,
+    GetSegmentTableSchemaRequest, GetSegmentTableSchemaResponse, QueryDatasetResponse,
+    QueryTasksOnCompletionResponse, QueryTasksResponse, ReadDatasetEntryRequest,
+    ReadTableEntryRequest, RegisterWithDatasetResponse, ScanSegmentTableRequest,
+    ScanSegmentTableResponse, UnregisterFromDatasetResponse, VersionRequest, WriteTableRequest,
 };
 use re_protos::common::v1alpha1::ext::{IfDuplicateBehavior, ScanParameters, SegmentId};
 use re_protos::common::v1alpha1::{DataframePart, TaskId};
 use re_protos::external::prost::bytes::Bytes;
 use re_protos::headers::RerunHeadersInjectorExt as _;
 use re_protos::{TypeConversionError, invalid_schema, missing_column, missing_field};
+use std::sync::Arc;
+use tokio::sync::OnceCell;
 use tokio_stream::{Stream, StreamExt as _};
 use tonic::IntoStreamingRequest as _;
 use tonic::codegen::{Body, StdError};
@@ -72,7 +74,18 @@ pub struct SegmentQueryParams {
 //TODO(ab): this should NOT be `Clone`, to discourage callsites from holding on to a client for too
 //long. However we have a bunch of places that needs to be fixed before we can do that.
 #[derive(Debug, Clone)]
-pub struct GenericConnectionClient<T>(RerunCloudServiceClient<T>);
+pub struct GenericConnectionClient<T> {
+    inner: RerunCloudServiceClient<T>,
+
+    /// Cached `VersionResponse.features` list. Populated lazily on the first
+    /// `supports_feature` call and reused for the lifetime of this client
+    /// (and any clones — `Arc` ensures clones share the same cache).
+    ///
+    /// Server features are stable per connection; if the server restarts
+    /// with a different feature set, callers reconnect and get a fresh
+    /// client (and a fresh cache).
+    features: Arc<OnceCell<Vec<String>>>,
+}
 
 impl<T> GenericConnectionClient<T> {
     /// Create a new [`Self`].
@@ -80,14 +93,77 @@ impl<T> GenericConnectionClient<T> {
     /// This should not be used in the viewer, use [`crate::ConnectionRegistryHandle::client`]
     /// instead.
     pub fn new(client: RerunCloudServiceClient<T>) -> Self {
-        Self(client)
+        Self {
+            inner: client,
+            features: Arc::new(OnceCell::new()),
+        }
     }
 
     /// Get a mutable reference to the underlying `RedapClient`.
     //TODO(#10188): this should disappear once we have wrapper for all endpoints and the client code
     //is using them.
     pub fn inner(&mut self) -> &mut RerunCloudServiceClient<T> {
-        &mut self.0
+        &mut self.inner
+    }
+}
+
+// ---
+
+/// Thin wrapper around [`GenericConnectionClient<crate::grpc::RedapClientInner>`] that
+/// additionally exposes the underlying layered tower service.
+///
+/// Sibling channels to the same origin (e.g. the per-connection analytics OTLP client)
+/// can clone the service and call non-`RerunCloudService` RPCs through it without
+/// rebuilding the auth/version/propagate-headers stack.
+///
+/// Use [`crate::ConnectionRegistryHandle::client`] to construct.
+#[derive(Debug, Clone)]
+pub struct ConnectionClient {
+    inner: GenericConnectionClient<crate::grpc::RedapClientInner>,
+    service: crate::grpc::RedapClientInner,
+}
+
+impl ConnectionClient {
+    pub(crate) fn new(
+        inner: GenericConnectionClient<crate::grpc::RedapClientInner>,
+        service: crate::grpc::RedapClientInner,
+    ) -> Self {
+        Self { inner, service }
+    }
+
+    /// Returns a clone of the underlying layered tower service.
+    pub fn service(&self) -> crate::grpc::RedapClientInner {
+        self.service.clone()
+    }
+
+    /// Build a [`ConnectionClient`] backed by a never-connecting localhost channel.
+    ///
+    /// Available only under `cfg(test)` or with the `test_utils` feature, this is
+    /// intended for unit tests that need a fully-typed `ConnectionClient` without
+    /// going through the registry / network.
+    #[cfg(any(test, feature = "test_utils"))]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_disconnected() -> Self {
+        let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let (raw_client, service) =
+            crate::grpc::assemble_client(channel, /* credentials */ None);
+        Self::new(GenericConnectionClient::new(raw_client), service)
+    }
+}
+
+impl std::ops::Deref for ConnectionClient {
+    type Target = GenericConnectionClient<crate::grpc::RedapClientInner>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for ConnectionClient {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 
@@ -101,6 +177,7 @@ where
     <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
 {
     /// Uses the `/Version` endpoint for testing roundtrip time.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn ping(&mut self) -> ApiResult<()> {
         self.inner()
             .version(VersionRequest {})
@@ -110,6 +187,7 @@ where
     }
 
     /// Returns version and deployment information from the server.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn version_info(&mut self) -> ApiResult<VersionResponse> {
         let response = self
             .inner()
@@ -120,8 +198,44 @@ where
         Ok(response.into())
     }
 
+    /// Checks whether the server advertises a given feature flag in its
+    /// `VersionResponse.features` list.
+    ///
+    /// Returns `Ok(false)` for both "feature genuinely not supported" and
+    /// "old server returned an empty `features` list" — callers should
+    /// treat these the same and fall back to the pre-feature path. That
+    /// invariant is what lets the empty-list-from-old-server case be
+    /// indistinguishable from a feature opt-out without breaking callers.
+    ///
+    /// The `features` list is fetched once via `/Version` on the first
+    /// invocation and cached on the client (shared across clones via
+    /// `Arc<OnceCell<_>>`). Subsequent calls do not hit the wire.
+    pub async fn supports_feature(&mut self, feature: &str) -> ApiResult<bool> {
+        // `OnceCell::get_or_try_init` single-flights the fetch: concurrent
+        // first calls produce a single Version RPC; later calls return the
+        // cached list directly.
+        let features_cache;
+        let features = if let Some(features) = self.features.get() {
+            features
+        } else {
+            // We can't pass `&mut self` into the async closure (the `OnceCell`
+            // borrow on `self.features` is immutable, but `version_info` needs
+            // `&mut self`), so we clone the `Arc<OnceCell<_>>` and call
+            // `version_info` outside the closure when the cell is empty.
+            features_cache = self.features.clone();
+            features_cache
+                .get_or_try_init(|| async {
+                    let info = self.version_info().await?;
+                    Ok(info.features)
+                })
+                .await?
+        };
+        Ok(features.iter().any(|f| f == feature))
+    }
+
     /// Calls the `/WhoAmI` endpoint to verify authentication and retrieve the user's identity
     /// and permissions.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn who_am_i(&mut self) -> ApiResult<re_protos::cloud::v1alpha1::WhoAmIResponse> {
         self.inner()
             .who_am_i(re_protos::cloud::v1alpha1::WhoAmIRequest {})
@@ -130,7 +244,88 @@ where
             .map_err(|err| ApiError::tonic(err, "/WhoAmI failed"))
     }
 
+    /// Estimate the round-trip time to the server.
+    ///
+    /// Performs `num_pings` calls to `/DoBandwidthTest` with `num_bytes = 1` and returns the
+    /// minimum elapsed time. Using the minimum (rather than the mean) helps reject latency spikes
+    /// from scheduling jitter, or transient network congestion.
+    pub async fn rtt(&mut self, num_pings: usize) -> ApiResult<std::time::Duration> {
+        if num_pings == 0 {
+            return Err(ApiError::invalid_arguments(
+                "rtt requires at least one ping",
+            ));
+        }
+
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..num_pings {
+            let start = web_time::Instant::now();
+            let mut stream = self
+                .inner()
+                .do_bandwidth_test(re_protos::cloud::v1alpha1::DoBandwidthTestRequest {
+                    num_bytes: 1,
+                })
+                .await
+                .map_err(|err| ApiError::tonic(err, "/DoBandwidthTest failed"))?
+                .into_inner();
+            // Drain the stream so we measure the full round-trip including the response.
+            while stream
+                .next()
+                .await
+                .transpose()
+                .map_err(|err| ApiError::tonic(err, "/DoBandwidthTest stream error"))?
+                .is_some()
+            {}
+            best = best.min(start.elapsed());
+        }
+        Ok(best)
+    }
+
+    /// Estimate the download bandwidth (bytes/second) from the server.
+    ///
+    /// Requests `num_bytes` of pseudo-random bytes via `/DoBandwidthTest`, subtracts `rtt` from
+    /// the elapsed time, and divides by `num_bytes`.
+    ///
+    /// Returns `None` if the elapsed time is not greater than `rtt` (e.g. very small payloads on
+    /// a fast loopback connection).
+    pub async fn bandwidth_bytes_per_sec(
+        &mut self,
+        num_bytes: u64,
+        rtt: std::time::Duration,
+    ) -> ApiResult<Option<f64>> {
+        let max = re_protos::cloud::v1alpha1::ext::MAX_BANDWIDTH_TEST_BYTES;
+        if num_bytes > max {
+            return Err(ApiError::invalid_arguments(format!(
+                "num_bytes ({num_bytes}) exceeds the maximum of {max}"
+            )));
+        }
+
+        let start = web_time::Instant::now();
+        let mut stream = self
+            .inner()
+            .do_bandwidth_test(re_protos::cloud::v1alpha1::DoBandwidthTestRequest { num_bytes })
+            .await
+            .map_err(|err| ApiError::tonic(err, "/DoBandwidthTest failed"))?
+            .into_inner();
+
+        let mut received: u64 = 0;
+        while let Some(item) = stream
+            .next()
+            .await
+            .transpose()
+            .map_err(|err| ApiError::tonic(err, "/DoBandwidthTest stream error"))?
+        {
+            received += item.payload.len() as u64;
+        }
+        let elapsed = start.elapsed();
+
+        let Some(transfer) = elapsed.checked_sub(rtt).filter(|t| !t.is_zero()) else {
+            return Ok(None);
+        };
+        Ok(Some(received as f64 / transfer.as_secs_f64()))
+    }
+
     /// Find all entries matching the given filter.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn find_entries(&mut self, filter: EntryFilter) -> ApiResult<Vec<EntryDetails>> {
         let (response, trace_id) = TonicResponseExt::into_inner_and_trace_id(
             self.inner()
@@ -156,6 +351,7 @@ where
     }
 
     /// Delete the provided entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn delete_entry(&mut self, entry_id: EntryId) -> ApiResult {
         self.inner()
             .delete_entry(DeleteEntryRequest {
@@ -168,6 +364,7 @@ where
     }
 
     /// Update the provided entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn update_entry(
         &mut self,
         entry_id: EntryId,
@@ -221,6 +418,7 @@ where
     }
 
     /// Create a new dataset entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn create_dataset_entry(
         &mut self,
         name: String,
@@ -247,6 +445,7 @@ where
     }
 
     /// Get information on a dataset entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn read_dataset_entry(&mut self, entry_id: EntryId) -> ApiResult<DatasetEntry> {
         let (inner, trace_id) = TonicResponseExt::into_inner_and_trace_id(
             self.inner()
@@ -272,6 +471,7 @@ where
     }
 
     /// Update the details of a dataset entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn update_dataset_entry(
         &mut self,
         entry_id: EntryId,
@@ -301,6 +501,7 @@ where
     }
 
     /// Get information on a table entry.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn read_table_entry(&mut self, entry_id: EntryId) -> ApiResult<TableEntry> {
         let (inner, trace_id) = TonicResponseExt::into_inner_and_trace_id(
             self.inner()
@@ -322,6 +523,7 @@ where
     }
 
     //TODO(ab): accept entry name
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_segment_table_schema(&mut self, entry_id: EntryId) -> ApiResult<ArrowSchema> {
         let (inner, trace_id) = TonicResponseExt::into_inner_and_trace_id(
             self.inner()
@@ -357,6 +559,7 @@ where
 
     /// Get a list of segment IDs for the given dataset entry ID.
     //TODO(ab): is there a way—and a reason—to not collect and instead return a stream?
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_dataset_segment_ids(
         &mut self,
         entry_id: EntryId,
@@ -429,6 +632,7 @@ where
     }
 
     //TODO(ab): accept entry name
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_dataset_manifest_schema(
         &mut self,
         entry_id: EntryId,
@@ -472,6 +676,7 @@ where
     ///
     /// Each item in the returned stream is a manifest part (a slice of the full manifest).
     /// Use [`RawRrdManifest::concat`] to combine parts if needed.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_rrd_manifest_stream(
         &mut self,
         dataset_id: EntryId,
@@ -515,6 +720,7 @@ where
     }
 
     /// Get the full [`RawRrdManifest`] of a recording, concatenated from all stream parts.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_rrd_manifest(
         &mut self,
         dataset_id: EntryId,
@@ -554,6 +760,7 @@ where
     ///
     /// You can include/exclude static/temporal chunks,
     /// and limit the query to a time range.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn query_dataset_raw(
         &mut self,
         params: SegmentQueryParams,
@@ -608,6 +815,7 @@ where
     /// and limit the query to a time range.
     ///
     /// You can pass on the results to [`Self::query_dataset_chunk_index`].
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn query_dataset_chunk_index(
         &mut self,
         params: SegmentQueryParams,
@@ -643,6 +851,7 @@ where
     }
 
     /// Input should be same schema as what [`Self::query_dataset_chunk_index`] returns.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn fetch_segment_chunks_by_id(
         &mut self,
         record_batch: &RecordBatch,
@@ -651,9 +860,11 @@ where
             chunk_infos: vec![DataframePart::from(record_batch)],
         };
 
+        let mut req = tonic::Request::new(fetch_chunks_request);
+        req.set_timeout(crate::FETCH_CHUNKS_DEADLINE);
         let response = self
             .inner()
-            .fetch_chunks(fetch_chunks_request)
+            .fetch_chunks(req)
             .await
             // NOTE: `ApiError::tonic` already extracts the trace-id from the error metadata.
             .map_err(|err| ApiError::tonic(err, "/FetchChunks failed"))?;
@@ -667,6 +878,7 @@ where
     /// Fetches chunks for a specified partition and query.
     ///
     /// Convenience for [`Self::query_dataset_chunk_index`] + [`Self::fetch_segment_chunks_by_id`].
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn fetch_segment_chunks_by_query(
         &mut self,
         params: SegmentQueryParams,
@@ -702,9 +914,11 @@ where
             chunk_infos: chunk_info_batches,
         };
 
+        let mut req = tonic::Request::new(fetch_chunks_request);
+        req.set_timeout(crate::FETCH_CHUNKS_DEADLINE);
         let response = self
             .inner()
-            .fetch_chunks(fetch_chunks_request)
+            .fetch_chunks(req)
             .await
             .map_err(|err| ApiError::tonic(err, "/FetchChunks failed"))?;
 
@@ -719,6 +933,7 @@ where
     ///
     /// NOTE: The server may pool multiple registrations into a single task. The result always has
     /// the same length as the output, so task ids may be duplicated.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn register_with_dataset(
         &mut self,
         dataset_id: EntryId,
@@ -887,6 +1102,7 @@ where
     /// This is only useful in the very specific, catatrophic scenario where the contents of the
     /// task queue were lost and some tasks are now stuck in `status=pending` forever.
     /// Do not use this unless you know exactly what you're doing.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn unregister_from_dataset(
         &mut self,
         dataset_id: EntryId,
@@ -944,6 +1160,7 @@ where
 
     /// Register a foreign Lance table to a new table entry in the catalog.
     //TODO(ab): in the future, we will probably support my types of tables (parquet on S3, etc.)
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn register_table(
         &mut self,
         name: EntryName,
@@ -977,6 +1194,7 @@ where
     }
 
     #[expect(clippy::fn_params_excessive_bools)] // TODO(emilk): remove bool parameters
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn do_maintenance(
         &mut self,
         dataset_id: EntryId,
@@ -1007,6 +1225,7 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn do_global_maintenance(&mut self) -> ApiResult {
         self.inner()
             .do_global_maintenance(tonic::Request::new(
@@ -1018,6 +1237,7 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_table_names(&mut self) -> ApiResult<Vec<EntryName>> {
         Ok(self
             .find_entries(re_protos::cloud::v1alpha1::EntryFilter {
@@ -1031,6 +1251,7 @@ where
     }
 
     // -- Tasks API --
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn query_tasks_on_completion(
         &mut self,
         task_ids: Vec<TaskId>,
@@ -1053,6 +1274,17 @@ where
         ))
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
+    pub async fn cancel_tasks(&mut self, task_ids: Vec<TaskId>) -> ApiResult {
+        self.inner()
+            .cancel_tasks(CancelTasksRequest { ids: task_ids })
+            .await
+            .map_err(|err| ApiError::tonic(err, "/CancelTasks failed"))?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn query_tasks(&mut self, task_ids: Vec<TaskId>) -> ApiResult<QueryTasksResponse> {
         let q = QueryTasksRequest { task_ids };
         let response = self
@@ -1066,6 +1298,7 @@ where
         Ok(response)
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn get_entry_id(
         &mut self,
         entry_name: &EntryName,
@@ -1095,6 +1328,7 @@ where
             .transpose()
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn write_table(
         &mut self,
         stream: impl Stream<Item = RecordBatch> + Send + 'static,
@@ -1121,6 +1355,7 @@ where
     /// Create a table entry.
     ///
     /// NOTE: if `url` is provided, the caller must ensure that it is writable and yet unused.
+    #[tracing::instrument(level = "info", skip_all)]
     pub async fn create_table_entry(
         &mut self,
         name: EntryName,
@@ -1153,5 +1388,92 @@ where
             })?
             .try_into()
             .map_err(|err| ApiError::internal_with_source(trace_id, err, "/CreateTable failed"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// When the `features` cell is already populated, `supports_feature`
+    /// must answer from the cache without going through the gRPC transport.
+    ///
+    /// We construct a `GenericConnectionClient` against a lazy channel
+    /// pointing at an unrouteable address: any RPC against it would error
+    /// (or hang past our test timeout). The test pre-populates the cell
+    /// and then issues three `supports_feature` calls. If the cache is
+    /// honored, all three return immediately; if it's bypassed, the
+    /// transport call fails the test.
+    #[tokio::test]
+    async fn supports_feature_short_circuits_when_cache_is_populated() {
+        // `connect_lazy` succeeds without doing any I/O; the failure
+        // would only surface when an RPC actually flows through.
+        let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let mut client = GenericConnectionClient::new(RerunCloudServiceClient::new(channel));
+
+        // Prime the cache exactly as a successful first-call would.
+        client
+            .features
+            .set(vec![
+                "per_segment_index_values".to_owned(),
+                "future_X".to_owned(),
+            ])
+            .expect("freshly-constructed cell is empty");
+
+        // Each of these must hit only the cache. If any of them attempts
+        // an RPC, the unrouteable transport will error and fail the test.
+        assert!(
+            client
+                .supports_feature("per_segment_index_values")
+                .await
+                .unwrap()
+        );
+        assert!(client.supports_feature("future_X").await.unwrap());
+        assert!(!client.supports_feature("nonexistent").await.unwrap());
+    }
+
+    /// The cache is shared across clones via `Arc<OnceCell<_>>` — populating
+    /// the cell on one clone makes it observable on the other.
+    #[tokio::test]
+    async fn features_cache_is_shared_across_clones() {
+        let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let client_a = GenericConnectionClient::new(RerunCloudServiceClient::new(channel));
+        let mut client_b = client_a.clone();
+
+        client_a
+            .features
+            .set(vec!["per_segment_index_values".to_owned()])
+            .expect("freshly-constructed cell is empty");
+
+        // The clone observes the same cached features and answers without
+        // the transport.
+        assert!(
+            client_b
+                .supports_feature("per_segment_index_values")
+                .await
+                .unwrap()
+        );
+        assert!(!client_b.supports_feature("nonexistent").await.unwrap());
+    }
+
+    /// Old server returns an empty `features` list. `supports_feature`
+    /// must answer `Ok(false)` — never error — so callers can fall back
+    /// to the pre-feature path.
+    #[tokio::test]
+    async fn supports_feature_returns_false_for_empty_features_list() {
+        let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let mut client = GenericConnectionClient::new(RerunCloudServiceClient::new(channel));
+
+        client
+            .features
+            .set(vec![])
+            .expect("freshly-constructed cell is empty");
+
+        assert!(
+            !client
+                .supports_feature("per_segment_index_values")
+                .await
+                .unwrap()
+        );
     }
 }

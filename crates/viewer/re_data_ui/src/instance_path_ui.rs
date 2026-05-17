@@ -125,7 +125,7 @@ fn instance_path_ui(
         .sum::<usize>();
 
     match ui_layout {
-        UiLayout::List => {
+        UiLayout::List | UiLayout::Inline => {
             ui_layout.label(
                 ui,
                 format!(
@@ -345,7 +345,6 @@ fn component_list_ui(
     );
 }
 
-#[expect(clippy::too_many_arguments)]
 fn component_ui(
     ctx: &StoreViewContext<'_>,
     ui: &mut egui::Ui,

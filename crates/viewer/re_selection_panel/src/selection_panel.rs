@@ -450,6 +450,14 @@ The last rule matching `/world/house` is `+ /world/**`, so it is included.
         clone_view_button_ui(ctx, ui, viewport, *view_id);
 
         if let Some(view) = viewport.view(view_id) {
+            if view.class(ctx.view_class_registry()).is_experimental() {
+                ui.add_space(6.0);
+                ui.info_label(
+                    "This view is experimental: its API, behavior, and on-disk format may change without notice.",
+                );
+                ui.add_space(8.0);
+            }
+
             ui.section_collapsing_header("Entity path filter")
                 .with_action_button(
                     &re_ui::icons::EDIT,
@@ -1079,7 +1087,7 @@ fn data_section_ui(item: &Item) -> Option<Box<dyn DataUi>> {
         Item::TableId(_)
         | Item::View(_)
         | Item::Container(_)
-        | Item::RedapEntry(_)
+        | Item::RedapEntry { .. }
         | Item::RedapServer(_) => None,
     }
 }

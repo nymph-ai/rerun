@@ -55,8 +55,9 @@ pub async fn query_dataset_simple_filter(service: impl RerunCloudService) {
         &query,
         &[] as &[&str],
         None,
-        None, // arrow_schema — let the provider fetch it
-        None, // trace_headers
+        None,       // arrow_schema — let the provider fetch it
+        None,       // trace_headers
+        Vec::new(), // metrics_collectors
     )
     .await
     .unwrap();
@@ -136,8 +137,9 @@ pub async fn query_dataset_with_limit(service: impl RerunCloudService) {
         &query,
         &[] as &[&str],
         None,
-        None, // arrow_schema — let the provider fetch it
-        None, // trace_headers
+        None,       // arrow_schema — let the provider fetch it
+        None,       // trace_headers
+        Vec::new(), // metrics_collectors
     )
     .await
     .unwrap();

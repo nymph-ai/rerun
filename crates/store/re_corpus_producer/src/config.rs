@@ -53,8 +53,14 @@ impl CorpusConfig {
             out.insert("secret_access_key".to_owned(), self.s3_secret_key.clone());
         }
         if self.s3_force_path_style {
-            out.insert("aws_virtual_hosted_style_request".to_owned(), "false".to_owned());
-            out.insert("virtual_hosted_style_request".to_owned(), "false".to_owned());
+            out.insert(
+                "aws_virtual_hosted_style_request".to_owned(),
+                "false".to_owned(),
+            );
+            out.insert(
+                "virtual_hosted_style_request".to_owned(),
+                "false".to_owned(),
+            );
             out.insert("aws_allow_http".to_owned(), "true".to_owned());
             out.insert("allow_http".to_owned(), "true".to_owned());
         }

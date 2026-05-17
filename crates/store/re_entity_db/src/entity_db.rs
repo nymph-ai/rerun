@@ -795,7 +795,7 @@ impl EntityDb {
         let chunk_batch =
             re_sorbet::ChunkBatch::try_from(record_batch).map_err(re_chunk::ChunkError::from)?;
         let mut chunk = re_chunk::Chunk::from_chunk_batch(&chunk_batch)?;
-        chunk.sort_if_unsorted();
+        chunk.sort_by_row_ids_if_needed();
         self.add_chunk_with_timestamp_metadata(
             &Arc::new(chunk),
             &chunk_batch.sorbet_schema().timestamps,

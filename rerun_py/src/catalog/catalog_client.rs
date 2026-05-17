@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::{Arc, LazyLock};
 
 static RERUN_SDK_NUM_CPUS: LazyLock<Option<u64>> = LazyLock::new(|| {
@@ -27,17 +26,16 @@ use arrow::pyarrow::PyArrowType;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::types::{PyAnyMethods as _, PyDict};
 use pyo3::{Py, PyAny, PyErr, PyResult, Python, pyclass, pymethods};
-use re_datafusion::{DEFAULT_CATALOG_NAME, get_all_catalog_names};
 use re_log_types::EntryName;
 use re_protos::cloud::v1alpha1::{EntryFilter, EntryKind};
 
-use crate::catalog::datafusion_catalog::PyDataFusionCatalogProvider;
+use crate::catalog::datafusion_catalog::PyDataFusionCatalogProviderList;
 use crate::catalog::{
     ConnectionHandle, PyDatasetEntryInternal, PyEntryId, PyRerunHtmlTable, PyTableEntryInternal,
     to_py_err,
 };
 use crate::trace_context::read_trace_context_from_python;
-use crate::utils::{get_tokio_runtime, wait_for_future};
+use crate::utils::wait_for_future;
 
 /// Client for a remote Rerun catalog server.
 #[pyclass(
@@ -130,7 +128,7 @@ impl PyCatalogClientInternal {
             datafusion_ctx,
         };
 
-        ret.update_catalog_providers(py, true)?;
+        ret.register_catalog_provider_list(py)?;
 
         Ok(ret)
     }
@@ -150,6 +148,26 @@ impl PyCatalogClientInternal {
         let connection = self_.borrow(py).connection.clone();
         let info = connection.version_info(py)?;
         Ok((info.version, info.cloud_provider, info.cloud_region))
+    }
+
+    fn rtt_seconds(self_: Py<Self>, py: Python<'_>, num_pings: usize) -> PyResult<f64> {
+        let _span = read_trace_context_from_python(py, "CatalogClient.rtt_seconds").entered();
+        let connection = self_.borrow(py).connection.clone();
+        Ok(connection.rtt(py, num_pings)?.as_secs_f64())
+    }
+
+    fn bandwidth_bytes_per_sec(
+        self_: Py<Self>,
+        py: Python<'_>,
+        num_bytes: u64,
+        rtt_seconds: f64,
+    ) -> PyResult<Option<f64>> {
+        let _span =
+            read_trace_context_from_python(py, "CatalogClient.bandwidth_bytes_per_sec").entered();
+        let connection = self_.borrow(py).connection.clone();
+        let rtt = std::time::Duration::try_from_secs_f64(rtt_seconds)
+            .map_err(|err| PyValueError::new_err(format!("invalid rtt_seconds: {err}")))?;
+        connection.bandwidth_bytes_per_sec(py, num_bytes, rtt)
     }
 
     /// Get a list of all dataset entries in the catalog.
@@ -277,8 +295,6 @@ impl PyCatalogClientInternal {
         let name = EntryName::new(name).map_err(|err| PyValueError::new_err(err.to_string()))?;
         let table_entry = connection.register_table(py, name, url)?;
 
-        self_.borrow(py).update_catalog_providers(py, false)?;
-
         Py::new(
             py,
             PyTableEntryInternal::new(self_.clone_ref(py), table_entry),
@@ -329,8 +345,6 @@ impl PyCatalogClientInternal {
         let schema = Arc::new(schema.0);
         let name = EntryName::new(name).map_err(|err| PyValueError::new_err(err.to_string()))?;
         let table_entry = connection.create_table_entry(py, &name, schema, url)?;
-
-        self_.borrow(py).update_catalog_providers(py, false)?;
 
         Py::new(
             py,
@@ -390,41 +404,19 @@ impl PyCatalogClientInternal {
 }
 
 impl PyCatalogClientInternal {
-    fn update_catalog_providers(&self, py: Python<'_>, force_register: bool) -> Result<(), PyErr> {
+    /// Install a single lazy [`PyDataFusionCatalogProviderList`] on the session context. The
+    /// list resolves catalogs on demand, so this call performs no gRPC; subsequent SQL
+    /// planning never fans out to wildcard `FindEntries` either.
+    #[tracing::instrument(skip_all)]
+    fn register_catalog_provider_list(&self, py: Python<'_>) -> Result<(), PyErr> {
+        let Some(ctx) = self.datafusion_ctx.as_ref() else {
+            return Ok(());
+        };
+
         let client = wait_for_future(py, self.connection.client())?;
-        let runtime = get_tokio_runtime().handle();
+        let provider_list = PyDataFusionCatalogProviderList::new(client, self.origin.clone());
 
-        let provider_names = get_all_catalog_names(&client, runtime).map_err(to_py_err)?;
-        let mut providers = provider_names
-            .iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<_>>();
-        if !providers.contains(&DEFAULT_CATALOG_NAME) {
-            providers.push(DEFAULT_CATALOG_NAME);
-        }
-
-        if let Some(ctx) = self.datafusion_ctx.as_ref() {
-            let existing_catalogs: HashSet<String> =
-                ctx.call_method0(py, "catalog_names")?.extract(py)?;
-
-            for provider_name in providers {
-                if !force_register && existing_catalogs.contains(provider_name) {
-                    continue;
-                }
-
-                let catalog_provider = PyDataFusionCatalogProvider::new(
-                    Some(provider_name.to_owned()),
-                    client.clone(),
-                );
-
-                ctx.call_method1(
-                    py,
-                    "register_catalog_provider",
-                    (provider_name, catalog_provider),
-                )?;
-            }
-        }
-
+        ctx.call_method1(py, "register_catalog_provider_list", (provider_list,))?;
         Ok(())
     }
 }

@@ -71,7 +71,7 @@ struct Index {
 
 /// All indexes for a dataset's chunks
 ///
-/// Index creation behavior (mimics Rerun Cloud):
+/// Index creation behavior (mimics Rerun Hub):
 /// - Cannot create an index that already exists. Changing and index's parameters requires
 ///   deleting it first.
 /// - Cannot create a index for a column that doesn't already have data, as we don't know
@@ -219,7 +219,7 @@ impl DatasetChunkIndexes {
                 h.read().iter_physical_chunks().cloned().collect()
             }
             crate::store::ResolvedStore::Lazy(lazy) => lazy
-                .collect_physical_chunks()
+                .load_all_chunks()
                 .map_err(|err| StoreError::IndexingError(format!("{err:#}")))?,
         };
 
@@ -321,16 +321,15 @@ impl DatasetChunkIndexes {
         let mut backfill = Vec::new();
         for (segment_id, segment) in dataset.segments() {
             for (layer_name, layer) in segment.layers() {
-                let chunks: Vec<std::sync::Arc<re_chunk_store::Chunk>> = match layer
-                    .resolved_store()
-                {
-                    crate::store::ResolvedStore::Eager(h) => {
-                        h.read().iter_physical_chunks().cloned().collect()
-                    }
-                    crate::store::ResolvedStore::Lazy(lazy) => lazy
-                        .collect_physical_chunks()
-                        .map_err(|err| StoreError::IndexingError(format!("{err:#}")))?,
-                };
+                let chunks: Vec<std::sync::Arc<re_chunk_store::Chunk>> =
+                    match layer.resolved_store() {
+                        crate::store::ResolvedStore::Eager(h) => {
+                            h.read().iter_physical_chunks().cloned().collect()
+                        }
+                        crate::store::ResolvedStore::Lazy(lazy) => lazy
+                            .load_all_chunks()
+                            .map_err(|err| StoreError::IndexingError(format!("{err:#}")))?,
+                    };
                 for chunk in chunks {
                     if chunk.entity_path() == entity_path
                         && chunk.components().0.contains_key(component)
@@ -360,7 +359,7 @@ impl DatasetChunkIndexes {
 #[cfg(test)]
 mod tests {
     //! Simple test for vector search. More extensive tests are in the `redap_tests` package that
-    //! also tests consistency between this local server and Rerun Cloud.
+    //! also tests consistency between this local server and Rerun Hub.
 
     use arrow::array::{
         ArrayRef, FixedSizeBinaryArray, FixedSizeListArray, FixedSizeListBuilder, Float32Array,

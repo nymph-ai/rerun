@@ -32,7 +32,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use ndarray::{Array, ShapeBuilder as _, s};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_depth_image_3d").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_depth_image_3d")
+///             .spawn()?;
 ///
 ///     let width = 300;
 ///     let height = 200;

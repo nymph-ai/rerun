@@ -30,7 +30,10 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rerun::external::log;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_text_log_integration").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new(
+///         "rerun_example_text_log_integration",
+///     )
+///     .spawn()?;
 ///
 ///     // Log a text entry directly:
 ///     rec.log(
@@ -45,7 +48,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///         // You can also use the standard `RUST_LOG` environment variable!
 ///         .with_filter(rerun::default_log_filter())
 ///         .init()?;
-///     log::info!("This INFO log got added through the standard logging interface");
+///     log::info!(
+///         "This INFO log got added through the standard logging interface"
+///     );
 ///
 ///     log::logger().flush();
 ///

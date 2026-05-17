@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import datafusion as dfn
 import numpy as np
@@ -216,6 +216,7 @@ class ChunkInternal:
     @property
     def timeline_names(self) -> list[str]: ...
     def to_record_batch(self) -> pa.RecordBatch: ...
+    def with_entity_path(self, entity_path: str) -> ChunkInternal: ...
     @staticmethod
     def from_record_batch(record_batch: pa.RecordBatch) -> ChunkInternal: ...
     @staticmethod
@@ -224,7 +225,7 @@ class ChunkInternal:
         timelines: dict[str, Any],
         components: dict[ComponentDescriptor, Any],
     ) -> ChunkInternal: ...
-    def format(self, *, width: int = 240, redact: bool = False) -> str: ...
+    def format(self, *, width: int, redact: bool, trim_metadata_keys: bool) -> str: ...
     def apply_lenses(self, lenses: list[LensInternal]) -> list[ChunkInternal]: ...
     def apply_selector(self, source: str, selector: SelectorInternal) -> ChunkInternal: ...
     def __repr__(self) -> str: ...
@@ -251,6 +252,18 @@ def load_recording(path_to_rrd: str | os.PathLike[str]) -> RecordingInternal:
 
 def load_archive(path_to_rrd: str | os.PathLike[str]) -> RRDArchiveInternal:
     """Load a rerun archive from an RRD file."""
+
+def _optimization_profile_values(name: str) -> dict[str, object]:
+    """
+    Test-only: return a dict of the Rust `OptimizationProfile::<NAME>` field values.
+
+    Used by the Python parity test to confirm that
+    `OptimizationProfile.{LIVE,OBJECT_STORE}` on the Python side stays in sync
+    with the Rust constants this module forwards into `ChunkStoreConfig` /
+    `CompactionOptions` above.
+
+    Names: `"LIVE"`, `"OBJECT_STORE"`.
+    """
 
 # AI generated stubs for `PyRecordingStream` related class and functions
 # TODO(#9187): this will be entirely replaced when `RecordingStream` is itself written in Rust
@@ -373,8 +386,18 @@ class ChunkBatcherConfig:
         """Low-latency configuration, preferred when streaming directly to a viewer."""
 
     @staticmethod
-    def ALWAYS() -> ChunkBatcherConfig:
-        """Always flushes ASAP."""
+    def ALWAYS_TEST_ONLY() -> ChunkBatcherConfig:
+        """
+        Always flushes ASAP.
+
+        !!! warning
+            Test-only configuration. Produces an unrealistically large number of chunks and is
+            not suitable for production workloads. With a file sink in particular, per-chunk
+            metadata is accumulated in memory until the SDK process ends and the file footer
+            can be written, which can drive memory usage through the roof. Use
+            [`LOW_LATENCY`][rerun_bindings.ChunkBatcherConfig.LOW_LATENCY] instead for fast
+            flushing in real applications.
+        """
 
     @staticmethod
     def NEVER() -> ChunkBatcherConfig:
@@ -650,7 +673,7 @@ class FileSink:
     Save the recording stream to a file.
     """
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(self, path: str | os.PathLike[str], *, write_footer: bool = True) -> None:
         """
         Initialize a file sink.
 
@@ -658,6 +681,17 @@ class FileSink:
         ----------
         path:
             Path to write to. The file will be overwritten.
+        write_footer:
+            Whether to emit a complete RRD footer (including a manifest of every chunk) at the
+            end of the stream. Defaults to `True`.
+
+            Producing a footer keeps per-chunk metadata in memory for the lifetime of the sink,
+            which grows linearly with the number of chunks logged. Pass `write_footer=False` for
+            long-running streaming sessions; the resulting file is still a valid RRD and a
+            footer can be added after the fact via `rerun rrd optimize`.
+
+            *Warning*: lack of footer will significantly hurt random-access performance and some
+            tools (e.g. LazyStore) may not work properly.
 
         """
 
@@ -687,6 +721,8 @@ def save(
     path: str,
     default_blueprint: PyMemorySinkStorage | None = None,
     recording: PyRecordingStream | None = None,
+    *,
+    write_footer: bool = True,
 ) -> None:
     """Save the recording stream to a file."""
 
@@ -696,6 +732,8 @@ def save_blueprint(path: str, blueprint_stream: PyRecordingStream) -> None:
 def stdout(
     default_blueprint: PyMemorySinkStorage | None = None,
     recording: PyRecordingStream | None = None,
+    *,
+    write_footer: bool = True,
 ) -> None:
     """Save to stdout."""
 
@@ -753,6 +791,18 @@ def disconnect(recording: PyRecordingStream | None = None) -> None:
     Disconnect from remote server (if any).
 
     Subsequent log messages will be buffered and either sent on the next call to `connect_grpc` or `spawn`.
+    """
+
+def finalize_deferred_sinks(recording: PyRecordingStream | None = None) -> None:
+    """
+    Finalize any deferred-finalization sinks (i.e. file-like sinks that write a footer at the end).
+
+    For a bare `FileSink` this is equivalent to `disconnect()`. For a `MultiSink` containing both
+    streaming and file-like children, only the file-like children are dropped — the streaming
+    children stay live. For all other sinks this is a no-op.
+
+    Used by `RecordingStream.__exit__` so that file-backed recordings are consumable as soon as
+    the `with`-block exits, without waiting for `__del__` / GC.
     """
 
 def flush(*, timeout_sec: float = 1e38, recording: PyRecordingStream | None = None) -> None:
@@ -833,6 +883,17 @@ def send_arrow_chunk(
         A dictionary mapping timeline names to their values.
     components: `Dict[ComponentDescriptor, arrow::ListArray]`
         A dictionary mapping component types to their values.
+    """
+
+def send_chunks(
+    chunks: ChunkInternal | Iterable[ChunkInternal],
+    recording: PyRecordingStream | None = None,
+) -> None:
+    """
+    Send chunks to the recording stream.
+
+    Accepts a single chunk or any iterable of chunks. Blocks until every chunk
+    has been pushed to the recording's batcher.
     """
 
 def log_file_from_path(
@@ -1007,6 +1068,7 @@ class DatasetEntryInternal:
     # ---
 
     def download_segment(self, segment_id: str) -> RecordingInternal: ...
+    def segment_store(self, segment_id: str) -> LazyStoreInternal: ...
 
     # ---
 
@@ -1164,6 +1226,14 @@ class _UrdfTreeInternal:
     def get_collision_geometry_paths(self, link: str | _UrdfLinkInternal) -> list[str]: ...
     def get_visual_geometry_paths(self, link: str | _UrdfLinkInternal) -> list[str]: ...
     def log(self, recording: PyRecordingStream | None = None) -> None: ...
+    def stream(self, *, include_joint_transforms: bool = True) -> LazyChunkStreamInternal: ...
+    def compute_joint_transform_batches(
+        self,
+        names: pa.Array,
+        values: pa.Array,
+        *,
+        clamp: bool = False,
+    ) -> pa.Array: ...
 
 class _UrdfJointInternal:
     """Internal Rust representation of a URDF joint."""
@@ -1307,6 +1377,8 @@ class CatalogClientInternal:
     # ---
 
     def version_info(self) -> tuple[str, str | None, str | None]: ...
+    def rtt_seconds(self, num_pings: int) -> float: ...
+    def bandwidth_bytes_per_sec(self, num_bytes: int, rtt_seconds: float) -> float | None: ...
     def datasets(self, include_hidden: bool) -> list[DatasetEntryInternal]: ...
     def tables(self, include_hidden: bool) -> list[TableEntryInternal]: ...
 
@@ -1333,6 +1405,7 @@ class CatalogClientInternal:
 class RegistrationHandleInternal:
     def iter_results(self, timeout_secs: int | None = None) -> Iterator[tuple[str, str, str | None]]: ...
     def wait(self, timeout_secs: int | None = None) -> list[str]: ...
+    def cancel(self) -> None: ...
 
 #####################################################################################################################
 ## VIEWER_CLIENT                                                                                                   ##
@@ -1356,22 +1429,31 @@ class SelectorInternal:
     def execute(self, source: pa.Array) -> pa.Array | None: ...
     def execute_per_row(self, source: pa.Array) -> pa.Array | None: ...
     def pipe(self, func: Any) -> SelectorInternal: ...
+    def try_to_string(self) -> str | None: ...
     def __repr__(self) -> str: ...
     def __str__(self) -> str: ...
 
-class LensOutputInternal:
-    def __init__(self) -> None: ...
-    def to_component(self, component: ComponentDescriptor, selector: SelectorInternal) -> LensOutputInternal: ...
-    def to_timeline(self, timeline_name: str, timeline_type: str, selector: SelectorInternal) -> LensOutputInternal: ...
-
-class LensInternal:
+class DeriveLensInternal:
     def __init__(
         self,
         input_component: str,
-        output: LensOutputInternal | None = None,
         *,
-        to_entity: Mapping[str, LensOutputInternal] | None = None,
+        output_entity: str | None = None,
+        scatter: bool = False,
     ) -> None: ...
+    def to_component(self, component: ComponentDescriptor, selector: SelectorInternal) -> DeriveLensInternal: ...
+    def to_timeline(self, timeline_name: str, timeline_type: str, selector: SelectorInternal) -> DeriveLensInternal: ...
+
+class MutateLensInternal:
+    def __init__(
+        self,
+        input_component: str,
+        selector: SelectorInternal,
+        *,
+        keep_row_ids: bool = False,
+    ) -> None: ...
+
+LensInternal = DeriveLensInternal | MutateLensInternal
 
 class _ServerInternal:
     def __init__(
@@ -1484,6 +1566,50 @@ def _get_trace_context_var() -> Any:
     Returns `None` when `perf_telemetry` is disabled.
     """
 
+def _get_tracing_session_var() -> Any:
+    """
+    Return the `ContextVar` carrying the active rerun session id.
+
+    Set by the `tracing_session()` context manager and read on every outbound
+    gRPC call to merge `rerun_session_id=<id>` into the W3C `tracestate` header.
+
+    Returns `None` when `perf_telemetry` is disabled.
+    """
+
+def _is_telemetry_active() -> bool:
+    """
+    Return `True` if the rerun telemetry stack initialized successfully.
+
+    `tracing_session()` requires this to be true; otherwise the W3C propagator
+    is not registered and the session id has no transport.
+    """
+
+def _inc_active_tracing_sessions() -> None:
+    """Increment the process-wide active-tracing-session gate. Called by `tracing_session().__enter__`."""
+
+def _dec_active_tracing_sessions() -> None:
+    """Decrement the process-wide active-tracing-session gate. Called by `tracing_session().__exit__`."""
+
+def _log_tracing_session_started(rerun_session_id: str) -> None:
+    """Emit `rerun tracing session started: <rerun_session_id>` through the Rust `tracing` stack at INFO level."""
+
+def _log_tracing_session_finished(
+    rerun_session_id: str,
+    elapsed_s: float,
+    cpu_user_s: float | None,
+    cpu_system_s: float | None,
+    cpu_iowait_s: float | None,
+    net_rx_mb: float | None,
+) -> None:
+    """
+    Emit a single structured INFO event summarizing the tracing session at scope exit.
+
+    `Option<f64>` fields are `None` when the host platform or runtime can't supply
+    the metric (psutil missing, or `iowait` unavailable on macOS/Windows). Routed
+    through the Rust `tracing` stack so it follows `RUST_LOG` and the fmt-layer
+    pipeline like `_log_tracing_session_started`.
+    """
+
 #####################################################################################################################
 ## PIPELINE APIS                                                                                                   ##
 #####################################################################################################################
@@ -1498,16 +1624,31 @@ class ChunkStoreInternal:
     def summary(self) -> str: ...
     def stream(self) -> LazyChunkStreamInternal: ...
 
+class LazyStoreInternal:
+    """Internal implementation. Use LazyStore from rerun.experimental instead."""
+
+    def schema(self) -> SchemaInternal: ...
+    def num_chunks(self) -> int: ...
+    def summary(self) -> str: ...
+    def stream(self) -> LazyChunkStreamInternal: ...
+
+class StoreEntryInternal:
+    """Internal implementation. Use StoreEntry from rerun.experimental instead."""
+
+    @property
+    def kind(self) -> Literal["recording", "blueprint"]: ...
+    @property
+    def application_id(self) -> str: ...
+    @property
+    def recording_id(self) -> str: ...
+
 class RrdReaderInternal:
     """Internal implementation. Use RrdReader from rerun.experimental instead."""
 
     def __init__(self, path: str) -> None: ...
-    def stream(self) -> LazyChunkStreamInternal: ...
-    def store(self) -> ChunkStoreInternal: ...
-    @property
-    def application_id(self) -> str | None: ...
-    @property
-    def recording_id(self) -> str | None: ...
+    def store_entries(self) -> list[StoreEntryInternal]: ...
+    def stream(self, store: StoreEntryInternal | None = None) -> LazyChunkStreamInternal: ...
+    def store(self, store: StoreEntryInternal | None = None) -> LazyStoreInternal: ...
     @property
     def path(self) -> Path: ...
 
@@ -1520,6 +1661,8 @@ class McapReaderInternal:
         timeline_type: str,
         timestamp_offset_ns: int | None,
         decoders: list[str] | None,
+        include_topic_regex: list[str] | None,
+        exclude_topic_regex: list[str] | None,
     ) -> None: ...
     def stream(self) -> LazyChunkStreamInternal: ...
     @property
@@ -1573,7 +1716,12 @@ class LazyChunkStreamInternal:
         is_static: bool | None = None,
         components: list[str] | None = None,
     ) -> tuple[LazyChunkStreamInternal, LazyChunkStreamInternal]: ...
-    def lenses(self, lenses: list[LensInternal], output_mode: str) -> LazyChunkStreamInternal: ...
+    def lenses(
+        self,
+        lenses: list[LensInternal],
+        output_mode: str,
+        content: list[str] | None,
+    ) -> LazyChunkStreamInternal: ...
     def map(self, callable: Callable[[ChunkInternal], ChunkInternal]) -> LazyChunkStreamInternal: ...
     def flat_map(self, callable: Callable[[ChunkInternal], list[ChunkInternal]]) -> LazyChunkStreamInternal: ...
     @staticmethod
@@ -1594,6 +1742,14 @@ class LazyChunkStreamInternal:
     def __iter__(self) -> LazyChunkStreamIterator: ...
     @staticmethod
     def from_iter(iterable: Any) -> LazyChunkStreamInternal: ...
+    def send_to_recording(self, recording: PyRecordingStream | None = None) -> None:
+        """
+        Drain this stream into a recording stream.
+
+        If `recording` is `None`, the active recording is used. Blocks until every
+        chunk has been pushed to the recording's batcher. A silent no-op when
+        there is no active recording.
+        """
 
 class LazyChunkStreamIterator:
     """Iterator over chunks from a compiled stream."""
@@ -1603,3 +1759,130 @@ class LazyChunkStreamIterator:
 
     def __next__(self) -> ChunkInternal:
         """Implement next(self)."""
+
+#####################################################################################################################
+## METRICS APIS                                                                                                   ##
+#####################################################################################################################
+
+class _QueryMetrics:
+    """Frozen mirror of `re_datafusion::QuerySnapshot`. One per query."""
+
+    # Plan-time
+    dataset_id: str
+    """The dataset being queried."""
+
+    query_chunks: int
+    """Number of unique chunks returned by `query_dataset` (subset of the dataset)."""
+
+    query_segments: int
+    """Number of distinct segments involved in the query."""
+
+    query_layers: int
+    """Number of distinct layers touched by the query."""
+
+    query_columns: int
+    """Number of columns in the query output schema."""
+
+    query_entities: int
+    """Number of entity paths in the query request."""
+
+    query_bytes: int
+    """Total size of all queried chunks in bytes (from chunk metadata)."""
+
+    query_chunks_per_segment_min: int
+    """Min number of chunks touched within any single segment in this query."""
+
+    query_chunks_per_segment_max: int
+    """Max number of chunks touched within any single segment in this query."""
+
+    query_chunks_per_segment_mean: float
+    """Mean number of chunks touched per segment in this query."""
+
+    query_type: str
+    """Query shape: one of `"static"`, `"latest_at"`, `"range"`, `"dataframe"`, or `"full_scan"`."""
+
+    primary_index_name: str | None
+    """Name of the sort/filter index (timeline) for this query, if any."""
+
+    time_to_first_chunk_info: timedelta | None
+    """Time from sending `query_dataset` until the first response message arrives (the chunk metadata, not actual chunk data)."""
+
+    filters_pushed_down: int
+    """Number of filter expressions the table provider was able to push down to the server (`Exact` or `Inexact` from `supports_filters_pushdown`)."""
+
+    filters_applied_client_side: int
+    """Number of filter expressions that could not be pushed down — applied client-side by DataFusion via a downstream `FilterExec`."""
+
+    entity_path_narrowing_applied: bool
+    """True when projection-based entity-path narrowing actually trimmed the set of entity paths sent to `query_dataset`."""
+
+    # Execution-time
+    total_duration: timedelta
+    """Wall-clock time from the start of `scan()` until the query finished (cleanly or via error). Always populated."""
+
+    time_to_first_chunk: timedelta | None
+    """Time from scan start until the first chunk reached the consumer. `None` when no chunk was ever delivered (e.g. early error, empty result)."""
+
+    error_kind: str | None
+    """`None` on success. On failure, one of the stable string labels `"grpc_fetch"`, `"direct_fetch"`, `"decode"`, or `"other"`."""
+
+    direct_terminal_reason: str | None
+    """Reason a direct (HTTP Range) fetch hit a terminal failure — i.e. a non-retryable error or retries exhausted. `None` when no direct fetch terminally failed (can be `None` even when `error_kind` is set, if the failure was on the gRPC or decode path)."""
+
+    # Fetch counters
+    fetch_grpc_requests: int
+    """Number of gRPC fetch calls the scanner issued."""
+
+    fetch_grpc_bytes: int
+    """Sum of `chunk_byte_length` (catalog metadata, compressed on-disk size) over chunks fetched via gRPC. Excludes framing overhead and bytes consumed by failed retries — a lower bound on wire traffic."""
+
+    fetch_direct_requests: int
+    """Number of direct (HTTP Range) fetches the scanner issued. Counts each merged request once, regardless of byte ranges or retry attempts."""
+
+    fetch_direct_bytes: int
+    """Sum of `chunk_byte_length` (catalog metadata, compressed on-disk size) over chunks fetched via direct HTTP. Does **not** count filler bytes that range-merging pulls between adjacent chunks, so actual wire traffic can exceed this value."""
+
+    fetch_direct_retries: int
+    """Total number of direct-fetch retry *attempts* across all requests. A request retried 3 times contributes 3 here."""
+
+    fetch_direct_requests_retried: int
+    """Number of distinct direct-fetch requests that needed at least one retry. Always `≤ fetch_direct_retries`; the ratio between them is the average retries per retried request."""
+
+    fetch_direct_retry_sleep: timedelta
+    """Total backoff time slept across all direct-fetch retries."""
+
+    fetch_direct_max_attempt: int
+    """Sum of per-partition max attempts. For a single-partition query this is the true max; for multi-partition queries it is an upper bound on the true max — `MetricsSet::Count` has no `fetch_max` operation, so cross-partition aggregation sums."""
+
+    fetch_direct_original_ranges: int
+    """Number of byte ranges the planner *wanted* to fetch directly, before adjacent ranges were coalesced. With `fetch_direct_merged_ranges`, gives the range-merging ratio."""
+
+    fetch_direct_merged_ranges: int
+    """Number of byte ranges actually issued after merging adjacent ranges into combined HTTP Range requests. Equals `fetch_direct_requests` for a single-range-per-request scanner."""
+
+class _MetricsCollectorHandle:
+    """Opaque handle held by the `query_metrics()` context manager."""
+
+    def snapshot(self) -> list[_QueryMetrics]:
+        """
+        Non-destructive copy of all snapshots received so far.
+
+        Suitable for use mid-scope (`collector.queries` in the Python wrapper).
+        """
+
+    def drain(self) -> list[_QueryMetrics]:
+        """
+        Take and clear all snapshots.
+
+        Used by the context manager on `__exit__` to drain any remaining
+        snapshots into the user-visible Python `MetricsCollector` wrapper.
+        """
+
+def _new_metrics_collector() -> _MetricsCollectorHandle:
+    """
+    Allocate a fresh [`MetricsCollector`] and wrap it in a Python handle.
+
+    The Python `query_metrics()` context manager pushes the returned handle
+    onto the `_active_collectors` `ContextVar` for the duration of the
+    `with` block; nothing is registered globally.
+    """

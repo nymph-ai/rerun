@@ -13,7 +13,7 @@ use re_dataframe_ui::{ColumnBlueprint, DisplayRecordBatch, DisplayRecordBatchErr
 use re_log_types::{EntityPath, TimeInt, TimelineName};
 use re_sdk_types::ComponentDescriptor;
 use re_sdk_types::reflection::ComponentDescriptorExt as _;
-use re_ui::UiExt as _;
+use re_ui::{UiExt as _, UiLayout};
 use re_viewer_context::{StoreViewContext, TimeControlCommand, ViewId};
 
 use crate::expanded_rows::{ExpandedRows, ExpandedRowsCache};
@@ -36,7 +36,7 @@ pub(crate) enum HideColumnAction {
 pub(crate) fn dataframe_ui(
     ctx: &StoreViewContext<'_>,
     ui: &mut egui::Ui,
-    query_handle: &re_dataframe::QueryHandle<StorageEngineArcReadGuard>,
+    query_handle: &mut re_dataframe::QueryHandle<StorageEngineArcReadGuard>,
     expanded_rows_cache: &mut ExpandedRowsCache,
     view_id: &ViewId,
     time_cursor_row: Option<u64>,
@@ -212,7 +212,7 @@ impl RowsDisplayData {
 struct DataframeTableDelegate<'a> {
     ctx: &'a StoreViewContext<'a>,
     table_style: re_ui::TableStyle,
-    query_handle: &'a QueryHandle<StorageEngineArcReadGuard>,
+    query_handle: &'a mut QueryHandle<StorageEngineArcReadGuard>,
     selected_columns: &'a [ColumnDescriptor],
     header_entity_paths: Vec<Option<EntityPath>>,
     display_data: anyhow::Result<RowsDisplayData>,
@@ -509,7 +509,13 @@ impl egui_table::TableDelegate for DataframeTableDelegate<'_> {
                 // This is called when data actually needs to be drawn (as opposed to summaries like
                 // "N instances" or "N more…").
                 let data_content = |ui: &mut egui::Ui| {
-                    column.data_ui(&ctx_at_time, ui, batch_row_idx, instance_index);
+                    column.data_ui(
+                        &ctx_at_time,
+                        ui,
+                        batch_row_idx,
+                        instance_index,
+                        UiLayout::List,
+                    );
                 };
 
                 // Draw the cell content with some margin.

@@ -43,7 +43,8 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use ndarray::{Array, ShapeBuilder as _, s};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_image").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_image").spawn()?;
 ///
 ///     let mut image = Array::<u8, _>::zeros((200, 300, 3).f());
 ///     image.slice_mut(s![.., .., 0]).fill(255);
@@ -52,7 +53,10 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///
 ///     rec.log(
 ///         "image",
-///         &rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image)?,
+///         &rerun::Image::from_color_model_and_tensor(
+///             rerun::ColorModel::RGB,
+///             image,
+///         )?,
 ///     )?;
 ///
 ///     Ok(())
@@ -73,20 +77,25 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rerun::external::ndarray;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_image_formats").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_image_formats")
+///         .spawn()?;
 ///
 ///     // Simple gradient image
-///     let image = ndarray::Array3::from_shape_fn((256, 256, 3), |(y, x, c)| match c {
-///         0 => x as u8,
-///         1 => (x + y).min(255) as u8,
-///         2 => y as u8,
-///         _ => unreachable!(),
-///     });
+///     let image =
+///         ndarray::Array3::from_shape_fn((256, 256, 3), |(y, x, c)| match c {
+///             0 => x as u8,
+///             1 => (x + y).min(255) as u8,
+///             2 => y as u8,
+///             _ => unreachable!(),
+///         });
 ///
 ///     // RGB image
 ///     rec.log(
 ///         "image_rgb",
-///         &rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image.clone())?,
+///         &rerun::Image::from_color_model_and_tensor(
+///             rerun::ColorModel::RGB,
+///             image.clone(),
+///         )?,
 ///     )?;
 ///
 ///     // Green channel only (Luminance)

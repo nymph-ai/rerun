@@ -269,6 +269,7 @@ pub fn new_list_array_of_empties(child_datatype: &DataType, len: usize) -> ListA
 ///
 /// Returns an error if the arrays don't share the exact same datatype.
 pub fn concat_arrays(arrays: &[&dyn Array]) -> arrow::error::Result<ArrayRef> {
+    re_tracing::profile_function!();
     #[expect(clippy::disallowed_methods)] // that's the whole point
     let mut array = arrow::compute::concat(arrays)?;
     array.shrink_to_fit(); // VERY IMPORTANT! https://github.com/rerun-io/rerun/issues/7222

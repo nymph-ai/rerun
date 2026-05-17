@@ -23,5 +23,6 @@ Boolean
 * [`AudioSeekable`](../components/audio_seekable.md?speculative-link)
 * [`ClearIsRecursive`](../components/clear_is_recursive.md)
 * [`Interactive`](../components/interactive.md)
+* [`IsKeyframe`](../components/is_keyframe.md)
 * [`ShowLabels`](../components/show_labels.md)
 * [`Visible`](../components/visible.md)

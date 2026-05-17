@@ -92,6 +92,20 @@ pub struct AudioViewState {
     pub transport: ViewTransport,
 }
 
+impl re_byte_size::SizeBytes for AudioViewState {
+    fn heap_size_bytes(&self) -> u64 {
+        let Self {
+            sink: _,
+            sink_owner,
+            scratch,
+            transport: _,
+        } = self;
+
+        re_byte_size::SizeBytes::heap_size_bytes(sink_owner)
+            + re_byte_size::SizeBytes::heap_size_bytes(scratch)
+    }
+}
+
 impl ViewState for AudioViewState {
     fn as_any(&self) -> &dyn std::any::Any {
         self

@@ -37,7 +37,8 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rand::prelude::*;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_pinhole").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_pinhole").spawn()?;
 ///
 ///     let mut image = Array::<u8, _>::default((3, 3, 3).f());
 ///     let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
@@ -49,7 +50,10 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///     )?;
 ///     rec.log(
 ///         "world/image",
-///         &rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image)?,
+///         &rerun::Image::from_color_model_and_tensor(
+///             rerun::ColorModel::RGB,
+///             image,
+///         )?,
 ///     )?;
 ///
 ///     Ok(())
@@ -68,7 +72,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Perspective pinhole camera
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_pinhole_perspective").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_pinhole_perspective")
+///             .spawn()?;
 ///
 ///     let fov_y = std::f32::consts::FRAC_PI_4;
 ///     let aspect_ratio = 1.7777778;
@@ -83,8 +89,12 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///
 ///     rec.log(
 ///         "world/points",
-///         &rerun::Points3D::new([(0.0, 0.0, -0.5), (0.1, 0.1, -0.5), (-0.1, -0.1, -0.5)])
-///             .with_radii([0.025]),
+///         &rerun::Points3D::new([
+///             (0.0, 0.0, -0.5),
+///             (0.1, 0.1, -0.5),
+///             (-0.1, -0.1, -0.5),
+///         ])
+///         .with_radii([0.025]),
 ///     )?;
 ///
 ///     Ok(())

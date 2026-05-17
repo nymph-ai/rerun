@@ -62,7 +62,8 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
 
     rr.init("rerun_example_points3d_row_updates", spawn=True)
 
-    # Prepare a point cloud that evolves over 5 timesteps, changing the number of points in the process.
+    # Prepare a point cloud that evolves over 5 timesteps, changing the
+    # number of points in the process.
     times = np.arange(10, 15, 1.0)
     # fmt: off
     positions = [
@@ -74,13 +75,16 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
     ]
     # fmt: on
 
-    # At each timestep, all points in the cloud share the same but changing color and radius.
+    # At each timestep, all points in the cloud share the same but changing
+    # color and radius.
     colors = [0xFF0000FF, 0x00FF00FF, 0x0000FFFF, 0xFFFF00FF, 0x00FFFFFF]
     radii = [0.05, 0.01, 0.2, 0.1, 0.3]
 
     for i in range(5):
         rr.set_time("time", duration=10 + i)
-        rr.log("points", rr.Points3D(positions[i], colors=colors[i], radii=radii[i]))
+        rr.log(
+            "points", rr.Points3D(positions[i], colors=colors[i], radii=radii[i])
+        )
     ```
     <center>
     <picture>
@@ -102,7 +106,8 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
 
     rr.init("rerun_example_points3d_column_updates", spawn=True)
 
-    # Prepare a point cloud that evolves over 5 timesteps, changing the number of points in the process.
+    # Prepare a point cloud that evolves over 5 timesteps, changing the
+    # number of points in the process.
     times = np.arange(10, 15, 1.0)
     # fmt: off
     positions = [
@@ -114,7 +119,8 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
     ]
     # fmt: on
 
-    # At each timestep, all points in the cloud share the same but changing color and radius.
+    # At each timestep, all points in the cloud share the same but changing
+    # color and radius.
     colors = [0xFF0000FF, 0x00FF00FF, 0x0000FFFF, 0xFFFF00FF, 0x00FFFFFF]
     radii = [0.05, 0.01, 0.2, 0.1, 0.3]
 
@@ -122,7 +128,9 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
         "points",
         indexes=[rr.TimeColumn("time", duration=times)],
         columns=[
-            *rr.Points3D.columns(positions=positions).partition(lengths=[2, 4, 4, 3, 4]),
+            *rr.Points3D.columns(positions=positions).partition(
+                lengths=[2, 4, 4, 3, 4]
+            ),
             *rr.Points3D.columns(colors=colors, radii=radii),
         ],
     )
@@ -158,7 +166,10 @@ class Points3D(Points3DExt, Archetype, VisualizableArchetype):
 
     # Update the positions and radii, and clear everything else in the process.
     rr.set_time("frame", sequence=20)
-    rr.log("points", rr.Points3D.from_fields(clear_unset=True, positions=positions, radii=0.3))
+    rr.log(
+        "points",
+        rr.Points3D.from_fields(clear_unset=True, positions=positions, radii=0.3),
+    )
     ```
     <center>
     <picture>

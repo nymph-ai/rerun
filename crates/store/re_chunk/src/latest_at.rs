@@ -95,7 +95,7 @@ impl Chunk {
         let mut index = None;
 
         let is_static = self.is_static();
-        let is_sorted_by_row_id = self.is_sorted();
+        let is_sorted_by_row_id = self.is_row_ids_sorted();
 
         if is_static {
             if is_sorted_by_row_id {

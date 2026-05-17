@@ -37,14 +37,20 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Simple indexed 3D mesh
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_mesh3d_indexed").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_mesh3d_indexed")
+///             .spawn()?;
 ///
 ///     rec.log(
 ///         "triangle",
-///         &rerun::Mesh3D::new([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-///             .with_vertex_normals([[0.0, 0.0, 1.0]])
-///             .with_vertex_colors([0x0000FFFF, 0x00FF00FF, 0xFF0000FF])
-///             .with_triangle_indices([[2, 1, 0]]),
+///         &rerun::Mesh3D::new([
+///             [0.0, 1.0, 0.0],
+///             [1.0, 0.0, 0.0],
+///             [0.0, 0.0, 0.0],
+///         ])
+///         .with_vertex_normals([[0.0, 0.0, 1.0]])
+///         .with_vertex_colors([0x0000FFFF, 0x00FF00FF, 0xFF0000FF])
+///         .with_triangle_indices([[2, 1, 0]]),
 ///     )?;
 ///
 ///     Ok(())
@@ -63,7 +69,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### 3D mesh with instancing
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_mesh3d_instancing").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_mesh3d_instancing")
+///             .spawn()?;
 ///
 ///     rec.set_time_sequence("frame", 0);
 ///     rec.log(
@@ -75,7 +83,12 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///             [1.0, -1.0, -1.0],
 ///         ])
 ///         .with_triangle_indices([[0, 2, 1], [0, 3, 1], [0, 3, 2], [1, 3, 2]])
-///         .with_vertex_colors([0xFF0000FF, 0x00FF00FF, 0x00000FFFF, 0xFFFF00FF]),
+///         .with_vertex_colors([
+///             0xFF0000FF,
+///             0x00FF00FF,
+///             0x00000FFFF,
+///             0xFFFF00FF,
+///         ]),
 ///     )?;
 ///     // This box will not be affected by its parent's instance poses!
 ///     rec.log(

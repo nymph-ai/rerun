@@ -27,7 +27,9 @@ impl rerun::AsComponents for CustomPoints3D {
                     batch.serialized(ComponentDescriptor {
                         archetype: Some("user.CustomPoints3D".into()),
                         component: "user.CustomPoints3D:confidences".into(),
-                        component_type: Some(<Confidence as rerun::Component>::name()),
+                        component_type: Some(
+                            <Confidence as rerun::Component>::name(),
+                        ),
                     })
                 }))
                 .flatten(),
@@ -63,12 +65,16 @@ impl rerun::Loggable for Confidence {
 
     #[inline]
     fn to_arrow_opt<'a>(
-        data: impl IntoIterator<Item = Option<impl Into<std::borrow::Cow<'a, Self>>>>,
+        data: impl IntoIterator<
+            Item = Option<impl Into<std::borrow::Cow<'a, Self>>>,
+        >,
     ) -> re_sdk_types::SerializationResult<arrow::array::ArrayRef>
     where
         Self: 'a,
     {
-        rerun::Float32::to_arrow_opt(data.into_iter().map(|opt| opt.map(Into::into).map(|c| c.0)))
+        rerun::Float32::to_arrow_opt(
+            data.into_iter().map(|opt| opt.map(Into::into).map(|c| c.0)),
+        )
     }
 }
 
@@ -82,7 +88,8 @@ impl rerun::Component for Confidence {
 // ---
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let rec = rerun::RecordingStreamBuilder::new("rerun_example_custom_data").spawn()?;
+    let rec = rerun::RecordingStreamBuilder::new("rerun_example_custom_data")
+        .spawn()?;
 
     rec.log(
         "left/my_confident_point_cloud",
@@ -104,7 +111,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 glam::Vec3::splat(5.0),
                 3,
             )),
-            confidences: Some((0..27).map(|i| i as f32).map(Into::into).collect()),
+            confidences: Some(
+                (0..27).map(|i| i as f32).map(Into::into).collect(),
+            ),
         },
     )?;
 

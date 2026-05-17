@@ -24,6 +24,22 @@ pub struct VersionResponse {
     /// Cloud region where this instance is deployed (e.g. "us-west-2", "eastus"). Null if not deployed on cloud.
     #[prost(string, optional, tag = "4")]
     pub cloud_region: ::core::option::Option<::prost::alloc::string::String>,
+    /// Server-supported feature flags. Clients use this to gate optional behavior
+    /// and stay safe against rolling deployments where the server may be older
+    /// than the client.
+    ///
+    /// The format is a list of opaque feature strings. Known features:
+    ///
+    /// * `per_segment_index_values` — the server consumes
+    ///    `QueryLatestAt.per_segment_values` (RR-4355). Clients that omit this
+    ///    capability check and send `per_segment_values` to an old server will
+    ///    silently get static-only data.
+    ///
+    /// Unknown features must be ignored. Adding new features is additive and
+    /// never breaks compatibility — old clients see an empty list and fall back
+    /// to today's slow-but-correct path.
+    #[prost(string, repeated, tag = "5")]
+    pub features: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 impl ::prost::Name for VersionResponse {
     const NAME: &'static str = "VersionResponse";
@@ -67,6 +83,41 @@ impl ::prost::Name for WhoAmIResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/rerun.cloud.v1alpha1.WhoAmIResponse".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DoBandwidthTestRequest {
+    /// Total number of pseudo-random (incompressible) bytes the server should return,
+    /// summed across all streamed response chunks.
+    #[prost(uint64, tag = "1")]
+    pub num_bytes: u64,
+}
+impl ::prost::Name for DoBandwidthTestRequest {
+    const NAME: &'static str = "DoBandwidthTestRequest";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.DoBandwidthTestRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.DoBandwidthTestRequest".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DoBandwidthTestResponse {
+    /// A chunk of pseudo-random (incompressible) bytes.
+    ///
+    /// The total length across all streamed chunks equals `DoBandwidthTestRequest.num_bytes`.
+    #[prost(bytes = "bytes", tag = "1")]
+    pub payload: ::prost::bytes::Bytes,
+}
+impl ::prost::Name for DoBandwidthTestResponse {
+    const NAME: &'static str = "DoBandwidthTestResponse";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.DoBandwidthTestResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.DoBandwidthTestResponse".into()
     }
 }
 /// Application level error - used as `details` in the `google.rpc.Status` message
@@ -876,7 +927,7 @@ impl ::prost::Name for QueryDatasetResponse {
         "/rerun.cloud.v1alpha1.QueryDatasetResponse".into()
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Query {
     /// If specified, will perform a latest-at query with the given parameters.
     ///
@@ -922,18 +973,43 @@ impl ::prost::Name for Query {
 /// A chunk-level latest-at query, aka `LatestAtRelevantChunks`.
 ///
 /// This has the exact same semantics as the query of the same name on our `ChunkStore`.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+///
+/// Two modes of use (mutually exclusive):
+///    1. Global: set `at`. Applied to all segments.
+///    2. Per-segment: set `per_segment_values`. Each entry is positionally
+///       matched to `QueryDatasetRequest.segment_ids`. `at` and `Query.range`
+///       must be unset — the server reconstructs global bounds internally
+///       from the per-segment values.
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryLatestAt {
     /// Which index column should we perform the query on? E.g. `log_time`.
     ///
     /// Leave this empty to query for static data.
     #[prost(message, optional, tag = "1")]
     pub index: ::core::option::Option<super::super::common::v1alpha1::IndexColumnSelector>,
-    /// What index value are we looking for?
+    /// Global query value — applied to all segments.
     ///
-    /// Leave this empty to query for static data.
+    /// Omit this field to query for static data only.
+    /// Mutually exclusive with `per_segment_values`.
     #[prost(int64, optional, tag = "2")]
     pub at: ::core::option::Option<i64>,
+    /// Per-segment index values, positionally matched to
+    /// `QueryDatasetRequest.segment_ids`.
+    ///
+    /// When non-empty, `at` and `Query.range` must be unset — the server
+    /// reconstructs global bounds from the values for Lance pre-filtering,
+    /// then applies a per-segment post-filter for precision.
+    ///
+    /// Constraints (server returns `invalid_argument` on violation):
+    ///    - `segment_ids` must be non-empty.
+    ///    - `per_segment_values.len()` must equal `segment_ids.len()`.
+    ///    - `segment_ids` must contain no duplicates.
+    ///
+    /// Each entry's values list corresponds to the segment at the same
+    /// position in `segment_ids`. An empty values list for a segment means
+    /// no temporal chunks are returned for that segment (only static data).
+    #[prost(message, repeated, tag = "4")]
+    pub per_segment_values: ::prost::alloc::vec::Vec<IndexValueList>,
 }
 impl ::prost::Name for QueryLatestAt {
     const NAME: &'static str = "QueryLatestAt";
@@ -943,6 +1019,23 @@ impl ::prost::Name for QueryLatestAt {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/rerun.cloud.v1alpha1.QueryLatestAt".into()
+    }
+}
+/// A list of index values for a single segment.
+/// Used in `QueryLatestAt.per_segment_values`.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IndexValueList {
+    #[prost(int64, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<i64>,
+}
+impl ::prost::Name for IndexValueList {
+    const NAME: &'static str = "IndexValueList";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.IndexValueList".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.IndexValueList".into()
     }
 }
 /// / A chunk-level range query, aka `RangeRelevantChunks`.
@@ -1326,6 +1419,36 @@ impl ::prost::Name for QueryTasksOnCompletionResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/rerun.cloud.v1alpha1.QueryTasksOnCompletionResponse".into()
+    }
+}
+/// `CancelTasksRequest` is the request message for cancelling a number of tasks
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CancelTasksRequest {
+    /// Unique identifiers for the tasks
+    #[prost(message, repeated, tag = "1")]
+    pub ids: ::prost::alloc::vec::Vec<super::super::common::v1alpha1::TaskId>,
+}
+impl ::prost::Name for CancelTasksRequest {
+    const NAME: &'static str = "CancelTasksRequest";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.CancelTasksRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.CancelTasksRequest".into()
+    }
+}
+/// `CancelTasksResponse` is the response message for cancelling a number of tasks
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancelTasksResponse {}
+impl ::prost::Name for CancelTasksResponse {
+    const NAME: &'static str = "CancelTasksResponse";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.CancelTasksResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.CancelTasksResponse".into()
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1807,6 +1930,73 @@ impl ::prost::Name for DebugInfo {
         "/rerun.cloud.v1alpha1.DebugInfo".into()
     }
 }
+/// `ChunkKey` provides chunk location details in the data store.
+///
+/// Returned by `QueryDataset` (in the `chunk_key` Arrow column) and forwarded
+/// back to the server on `FetchChunks`. The `location` payload is opaque and
+/// interpreted per `data_source_kind` (e.g. `RrdChunkLocation` for RRD).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ChunkKey {
+    /// Chunk unique identifier
+    #[prost(message, optional, tag = "1")]
+    pub chunk_id: ::core::option::Option<super::super::common::v1alpha1::Tuid>,
+    /// What type of partition is this, rrd, mcap, etc.
+    /// This information determines how to interpret the `location` payload.
+    #[prost(enumeration = "DataSourceKind", tag = "2")]
+    pub data_source_kind: i32,
+    /// The location of the chunk in the data store. Opaque bytes; readers
+    /// decode based on `data_source_kind`.
+    #[prost(bytes = "bytes", optional, tag = "3")]
+    pub location: ::core::option::Option<::prost::bytes::Bytes>,
+    /// ETag of the source object (segment) as observed at registration time.
+    ///
+    /// Optional: legacy registrations and stores that do not return an ETag
+    /// leave this unset.
+    #[prost(string, optional, tag = "4")]
+    pub etag: ::core::option::Option<::prost::alloc::string::String>,
+    /// Wall-clock registration time of the parent segment (nanoseconds since
+    /// the Unix epoch), as recorded in the dataset manifest.
+    ///
+    /// Diagnostic only: not used as a precondition. Lets a client correlate a
+    /// decode failure on a stale chunk handle with a subsequent re-registration
+    /// event without consulting the dataset manifest. Optional: legacy
+    /// registrations leave this unset.
+    #[prost(int64, optional, tag = "5")]
+    pub registration_time_nanos: ::core::option::Option<i64>,
+}
+impl ::prost::Name for ChunkKey {
+    const NAME: &'static str = "ChunkKey";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.ChunkKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.ChunkKey".into()
+    }
+}
+/// RRD-specific decoding of `ChunkKey.location`.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RrdChunkLocation {
+    /// Where the chunk is stored (e.g. s3://bucket/file, file:///path/to/file).
+    #[prost(string, optional, tag = "1")]
+    pub url: ::core::option::Option<::prost::alloc::string::String>,
+    /// Byte offset of the chunk within the data source.
+    #[prost(uint64, optional, tag = "2")]
+    pub offset: ::core::option::Option<u64>,
+    /// Chunk length in bytes.
+    #[prost(uint64, optional, tag = "3")]
+    pub length: ::core::option::Option<u64>,
+}
+impl ::prost::Name for RrdChunkLocation {
+    const NAME: &'static str = "RrdChunkLocation";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.RrdChunkLocation".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.RrdChunkLocation".into()
+    }
+}
 /// Error codes for application level errors
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -2156,6 +2346,36 @@ pub mod rerun_cloud_service_client {
                 "WhoAmI",
             ));
             self.inner.unary(req, path, codec).await
+        }
+        /// Returns a payload of pseudo-random (incompressible) bytes of the requested size.
+        ///
+        /// Intended for measuring round-trip time and bandwidth between client and server:
+        /// * Send a few small requests (e.g. `num_bytes = 1`) to estimate RTT.
+        /// * Send a larger request (e.g. `num_bytes = 1 MiB`), subtract the RTT, and divide
+        ///   `num_bytes` by the remaining time to estimate bandwidth.
+        ///
+        /// The response is streamed as one or more chunks; the total number of bytes across
+        /// all chunks is exactly `num_bytes`.
+        pub async fn do_bandwidth_test(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DoBandwidthTestRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::DoBandwidthTestResponse>>,
+            tonic::Status,
+        > {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/rerun.cloud.v1alpha1.RerunCloudService/DoBandwidthTest",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "rerun.cloud.v1alpha1.RerunCloudService",
+                "DoBandwidthTest",
+            ));
+            self.inner.server_streaming(req, path, codec).await
         }
         pub async fn find_entries(
             &mut self,
@@ -2653,6 +2873,13 @@ pub mod rerun_cloud_service_client {
         ///
         /// Passing chunk IDs to this method effectively acts as a IF_EXIST filter.
         ///
+        /// For latest-at queries, the returned chunks are a **correctness-preserving
+        /// superset** of the minimum set needed to answer the query: the server may
+        /// include additional candidate chunks (e.g., overlap siblings within the
+        /// global max chunk length, or chunks that pass segment-level bounds without
+        /// per-value narrowing). Clients are expected to run their own latest-at
+        /// resolution on the returned chunks.
+        ///
         /// This endpoint requires the standard dataset headers.
         pub async fn query_dataset(
             &mut self,
@@ -2872,6 +3099,26 @@ pub mod rerun_cloud_service_client {
             ));
             self.inner.server_streaming(req, path, codec).await
         }
+        /// Cancel existing tasks
+        pub async fn cancel_tasks(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CancelTasksRequest>,
+        ) -> std::result::Result<tonic::Response<super::CancelTasksResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/rerun.cloud.v1alpha1.RerunCloudService/CancelTasks",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "rerun.cloud.v1alpha1.RerunCloudService",
+                "CancelTasks",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
         /// Rerun Manifests maintenance operations: scalar index creation, compaction, etc.
         ///
         /// This endpoint requires the standard dataset headers.
@@ -2942,6 +3189,24 @@ pub mod rerun_cloud_service_server {
             &self,
             request: tonic::Request<super::WhoAmIRequest>,
         ) -> std::result::Result<tonic::Response<super::WhoAmIResponse>, tonic::Status>;
+        /// Server streaming response type for the DoBandwidthTest method.
+        type DoBandwidthTestStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::DoBandwidthTestResponse, tonic::Status>,
+            > + std::marker::Send
+            + 'static;
+        /// Returns a payload of pseudo-random (incompressible) bytes of the requested size.
+        ///
+        /// Intended for measuring round-trip time and bandwidth between client and server:
+        /// * Send a few small requests (e.g. `num_bytes = 1`) to estimate RTT.
+        /// * Send a larger request (e.g. `num_bytes = 1 MiB`), subtract the RTT, and divide
+        ///   `num_bytes` by the remaining time to estimate bandwidth.
+        ///
+        /// The response is streamed as one or more chunks; the total number of bytes across
+        /// all chunks is exactly `num_bytes`.
+        async fn do_bandwidth_test(
+            &self,
+            request: tonic::Request<super::DoBandwidthTestRequest>,
+        ) -> std::result::Result<tonic::Response<Self::DoBandwidthTestStream>, tonic::Status>;
         async fn find_entries(
             &self,
             request: tonic::Request<super::FindEntriesRequest>,
@@ -3144,6 +3409,13 @@ pub mod rerun_cloud_service_server {
         ///
         /// Passing chunk IDs to this method effectively acts as a IF_EXIST filter.
         ///
+        /// For latest-at queries, the returned chunks are a **correctness-preserving
+        /// superset** of the minimum set needed to answer the query: the server may
+        /// include additional candidate chunks (e.g., overlap siblings within the
+        /// global max chunk length, or chunks that pass segment-level bounds without
+        /// per-value narrowing). Clients are expected to run their own latest-at
+        /// resolution on the returned chunks.
+        ///
         /// This endpoint requires the standard dataset headers.
         async fn query_dataset(
             &self,
@@ -3224,6 +3496,11 @@ pub mod rerun_cloud_service_server {
             &self,
             request: tonic::Request<super::QueryTasksOnCompletionRequest>,
         ) -> std::result::Result<tonic::Response<Self::QueryTasksOnCompletionStream>, tonic::Status>;
+        /// Cancel existing tasks
+        async fn cancel_tasks(
+            &self,
+            request: tonic::Request<super::CancelTasksRequest>,
+        ) -> std::result::Result<tonic::Response<super::CancelTasksResponse>, tonic::Status>;
         /// Rerun Manifests maintenance operations: scalar index creation, compaction, etc.
         ///
         /// This endpoint requires the standard dataset headers.
@@ -3397,6 +3674,50 @@ pub mod rerun_cloud_service_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rerun.cloud.v1alpha1.RerunCloudService/DoBandwidthTest" => {
+                    #[allow(non_camel_case_types)]
+                    struct DoBandwidthTestSvc<T: RerunCloudService>(pub Arc<T>);
+                    impl<T: RerunCloudService>
+                        tonic::server::ServerStreamingService<super::DoBandwidthTestRequest>
+                        for DoBandwidthTestSvc<T>
+                    {
+                        type Response = super::DoBandwidthTestResponse;
+                        type ResponseStream = T::DoBandwidthTestStream;
+                        type Future =
+                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DoBandwidthTestRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RerunCloudService>::do_bandwidth_test(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DoBandwidthTestSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)
@@ -4729,6 +5050,48 @@ pub mod rerun_cloud_service_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rerun.cloud.v1alpha1.RerunCloudService/CancelTasks" => {
+                    #[allow(non_camel_case_types)]
+                    struct CancelTasksSvc<T: RerunCloudService>(pub Arc<T>);
+                    impl<T: RerunCloudService>
+                        tonic::server::UnaryService<super::CancelTasksRequest>
+                        for CancelTasksSvc<T>
+                    {
+                        type Response = super::CancelTasksResponse;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CancelTasksRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RerunCloudService>::cancel_tasks(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CancelTasksSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

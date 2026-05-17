@@ -9,7 +9,7 @@ use crossbeam::channel::Sender;
 use re_chunk::RowId;
 use re_lenses::Lenses;
 use re_log_types::{SetStoreInfo, StoreId, StoreInfo};
-use re_mcap::{DecoderIdentifier, DecoderRegistry, SelectedDecoders};
+use re_mcap::{DecoderIdentifier, DecoderRegistry, SelectedDecoders, TopicFilter};
 use re_quota_channel::send_crossbeam;
 
 use crate::{ImportedData, Importer, ImporterError, ImporterSettings, URDF_DECODER_IDENTIFIER};
@@ -33,6 +33,7 @@ pub struct McapImporter {
     selected_decoders: SelectedDecoders,
     // TODO(RR-3491): We don't need the fallback logic anymore; use `OutputMode` instead.
     raw_fallback_enabled: bool,
+    topic_filter: TopicFilter,
     lenses_by_time_type: HashMap<re_log_types::TimeType, Arc<Lenses>>,
 }
 
@@ -58,6 +59,7 @@ impl McapImporter {
         Self {
             selected_decoders: selected_decoders.clone(),
             raw_fallback_enabled: true,
+            topic_filter: TopicFilter::default(),
             lenses_by_time_type,
         }
     }
@@ -65,6 +67,14 @@ impl McapImporter {
     /// Configures whether the raw decoder is used as a fallback for unsupported channels.
     pub fn with_raw_fallback(mut self, raw_fallback_enabled: bool) -> Self {
         self.raw_fallback_enabled = raw_fallback_enabled;
+        self
+    }
+
+    /// Configures a regex-based topic filter.
+    ///
+    /// See [`TopicFilter`] for matching semantics.
+    pub fn with_topic_filter(mut self, topic_filter: TopicFilter) -> Self {
+        self.topic_filter = topic_filter;
         self
     }
 
@@ -102,29 +112,41 @@ impl McapImporter {
         mcap: &[u8],
         timeline_type: re_log_types::TimeType,
         timestamp_offset_ns: Option<i64>,
-        emit_chunk: &mut dyn FnMut(re_chunk::Chunk),
+        emit_chunk: &(dyn Fn(re_chunk::Chunk) + Send + Sync),
     ) -> Result<(), ImporterError> {
         re_tracing::profile_function!();
 
         let lenses = self.lenses_for(timeline_type);
 
-        let mut on_chunk_with_transforms = |chunk: re_chunk::Chunk| {
+        // Apply time offset (if set) and make sure chunks are sorted by RowId before passing to the callback.
+        let emit_final_chunk = |chunk: re_chunk::Chunk| {
+            let mut chunk = apply_timestamp_offset(chunk, timestamp_offset_ns);
+            chunk.sort_by_row_ids_if_needed();
+
+            // If we hit this warning, we may be producing unnecessarily slow .rrd:s
+            // See RR-4658 for details.
+            chunk.warn_if_out_of_order();
+
+            emit_chunk(chunk);
+        };
+
+        let on_chunk_with_transforms = |chunk: re_chunk::Chunk| {
             if let Some(ref lenses) = lenses {
                 for result in lenses.apply(&chunk) {
                     match result {
-                        Ok(c) => emit_chunk(apply_timestamp_offset(c, timestamp_offset_ns)),
+                        Ok(chunk) => emit_final_chunk(chunk),
                         Err(partial) => {
                             for error in partial.errors() {
                                 re_log::error_once!("Lens error: {error}");
                             }
-                            if let Some(c) = partial.take() {
-                                emit_chunk(apply_timestamp_offset(c, timestamp_offset_ns));
+                            if let Some(chunk) = partial.partial_chunk() {
+                                emit_final_chunk(chunk);
                             }
                         }
                     }
                 }
             } else {
-                emit_chunk(apply_timestamp_offset(chunk, timestamp_offset_ns));
+                emit_final_chunk(chunk);
             }
         };
 
@@ -134,8 +156,8 @@ impl McapImporter {
 
         DecoderRegistry::all_builtin(self.raw_fallback_enabled)
             .select(&self.selected_decoders)
-            .plan(mcap, &summary)?
-            .run(mcap, &summary, timeline_type, &mut on_chunk_with_transforms)?;
+            .plan(mcap, &summary, &self.topic_filter)?
+            .run(mcap, &summary, timeline_type, &on_chunk_with_transforms)?;
 
         if self
             .selected_decoders
@@ -143,7 +165,8 @@ impl McapImporter {
             && let Err(err) = super::robot_description::extract_urdf_from_robot_descriptions(
                 mcap,
                 &summary,
-                &mut on_chunk_with_transforms,
+                &self.topic_filter,
+                &on_chunk_with_transforms,
             )
         {
             re_log::warn_once!("Failed to extract URDF from robot_description topics: {err}");
@@ -282,7 +305,7 @@ impl McapImporter {
             mcap,
             settings.timeline_type,
             settings.timestamp_offset_ns,
-            &mut |chunk| {
+            &|chunk| {
                 send_chunk_to_channel(tx, &store_id, chunk);
             },
         )

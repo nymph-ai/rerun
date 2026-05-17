@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use rerun::AsComponents as _;
 use rerun::blueprint::VisualizableArchetype as _;
-use rerun::external::arrow::array::{Array, Float32Array, Float64Array, StructArray};
+use rerun::external::arrow::array::{
+    Array, Float32Array, Float64Array, StructArray,
+};
 use rerun::external::arrow::datatypes::{DataType, Field};
 
 // region: nested_struct
@@ -28,7 +30,9 @@ fn make_sigmoid_struct_array(steps: usize) -> StructArray {
 // endregion: nested_struct
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let rec = rerun::RecordingStreamBuilder::new("rerun_example_component_mapping").spawn()?;
+    let rec =
+        rerun::RecordingStreamBuilder::new("rerun_example_component_mapping")
+            .spawn()?;
 
     // Generate columns for regular scalars (sin)
     let sin = (0..64).map(|step| (step as f64 / 10.0).sin());

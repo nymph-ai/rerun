@@ -22,13 +22,15 @@ use re_log_types::{
 };
 use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService;
 use re_protos::cloud::v1alpha1::{
-    CreateTableVectorIndexRequest, CreateTableVectorIndexResponse, DeleteEntryResponse,
-    EntryDetails, EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
+    CancelTasksRequest, CancelTasksResponse, CreateTableVectorIndexRequest,
+    CreateTableVectorIndexResponse, DeleteEntryResponse, DoBandwidthTestResponse, EntryDetails,
+    EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
     GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse, GetRrdManifestResponse,
     GetSegmentTableSchemaResponse, QueryDatasetResponse, QueryTasksOnCompletionRequest,
     QueryTasksOnCompletionResponse, QueryTasksRequest, QueryTasksResponse, RegisterTableRequest,
     RegisterTableResponse, RegisterWithDatasetResponse, ScanDatasetManifestRequest,
-    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse, SearchTableVectorRequest,
+    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse,
+    SearchTableVectorRequest,
 };
 use re_protos::common::v1alpha1::TaskId;
 use re_protos::common::v1alpha1::ext::{IfDuplicateBehavior, SegmentId};
@@ -395,6 +397,7 @@ macro_rules! decl_stream {
     };
 }
 
+decl_stream!(DoBandwidthTestResponseStream<rerun_cloud:DoBandwidthTestResponse>);
 decl_stream!(FetchChunksResponseStream<manifest:FetchChunksResponse>);
 decl_stream!(GetRrdManifestResponseStream<manifest:GetRrdManifestResponse>);
 decl_stream!(QueryDatasetResponseStream<manifest:QueryDatasetResponse>);
@@ -698,6 +701,7 @@ impl RerunCloudService for RerunCloudHandler {
                 version: re_build_info::exposed_version!().to_owned(),
                 cloud_provider: None,
                 cloud_region: None,
+                features: re_protos::cloud::v1alpha1::features::all_supported_features(),
             },
         ))
     }
@@ -713,6 +717,24 @@ impl RerunCloudService for RerunCloudHandler {
                 can_read: true,
                 can_write: true,
             },
+        ))
+    }
+
+    type DoBandwidthTestStream = DoBandwidthTestResponseStream;
+
+    async fn do_bandwidth_test(
+        &self,
+        request: tonic::Request<re_protos::cloud::v1alpha1::DoBandwidthTestRequest>,
+    ) -> tonic::Result<tonic::Response<Self::DoBandwidthTestStream>> {
+        let re_protos::cloud::v1alpha1::DoBandwidthTestRequest { num_bytes } = request.into_inner();
+        let max = re_protos::cloud::v1alpha1::ext::MAX_BANDWIDTH_TEST_BYTES;
+        if num_bytes > max {
+            return Err(Status::invalid_argument(format!(
+                "num_bytes ({num_bytes}) exceeds the maximum of {max}"
+            )));
+        }
+        Ok(tonic::Response::new(
+            Box::pin(bandwidth_test_stream(num_bytes)) as Self::DoBandwidthTestStream,
         ))
     }
 
@@ -1749,6 +1771,30 @@ impl RerunCloudService for RerunCloudHandler {
             ));
         }
 
+        // RR-4355: per-segment index value pushdown.
+        //
+        // If the request has `query.latest_at.per_segment_values`, build a
+        // map keyed by segment id so the per-segment chunk-fetch loop below
+        // can apply it. The ext `try_from` already validated that lengths
+        // match `segment_ids` and that there are no duplicates.
+        let per_segment_index_values: Option<BTreeMap<SegmentId, Vec<re_log_types::TimeInt>>> =
+            match query.as_ref().and_then(|q| q.latest_at.as_ref()) {
+                Some(la) if !la.per_segment_values.is_empty() => Some(
+                    std::iter::zip(&segment_ids, &la.per_segment_values)
+                        .map(|(sid, values)| {
+                            (
+                                sid.clone(),
+                                values
+                                    .iter()
+                                    .map(|v| re_log_types::TimeInt::new_temporal(*v))
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            };
+
         let chunk_stores = self.get_chunk_stores(entry_id, &segment_ids).await?;
 
         if chunk_stores.is_empty() {
@@ -1793,8 +1839,62 @@ impl RerunCloudService for RerunCloudHandler {
                         lazy.observe_query_cursor(timeline, range);
                     }
 
-                    let (chunks, missing_virtual) =
-                        get_chunks_for_query_results(&resolved, &entity_paths, query);
+                    // RR-4355: per-segment index values pushdown.
+                    //
+                    // When the request carries `per_segment_values`, fan out
+                    // `get_chunks_for_query_results` once per value for this
+                    // segment with a synthesized latest-at, then dedup. Per
+                    // the proto contract (`cloud.proto`):
+                    //   "An empty values list for a segment means no temporal
+                    //    chunks are returned for that segment (only static
+                    //    data)."
+                    // For the empty case we run a single static-only query
+                    // instead of returning nothing, so static chunks still
+                    // surface.
+                    let (chunks, missing_virtual) = if let Some(map) = &per_segment_index_values {
+                        if let Some(values) = map.get(&segment_id) {
+                            let synthesized: Vec<re_log_types::TimeInt> = if values.is_empty() {
+                                vec![re_log_types::TimeInt::STATIC]
+                            } else {
+                                values.clone()
+                            };
+                            let mut all_chunks: Vec<Arc<Chunk>> = Vec::new();
+                            let mut all_missing: BTreeSet<ChunkId> = BTreeSet::new();
+                            let mut seen: BTreeSet<ChunkId> = BTreeSet::new();
+                            for v in &synthesized {
+                                let mut q = query.clone();
+                                if let Some(la) = q.latest_at.as_mut() {
+                                    la.at = *v;
+                                    la.per_segment_values = Vec::new();
+                                }
+                                let (cs, missing) = get_chunks_for_query_results(
+                                    &resolved,
+                                    &entity_paths,
+                                    select_all_entity_paths,
+                                    &q,
+                                );
+                                for c in cs {
+                                    if seen.insert(c.id()) {
+                                        all_chunks.push(c);
+                                    }
+                                }
+                                all_missing.extend(missing);
+                            }
+                            for id in &seen {
+                                all_missing.remove(id);
+                            }
+                            (all_chunks, all_missing.into_iter().collect())
+                        } else {
+                            (Vec::new(), Vec::new())
+                        }
+                    } else {
+                        get_chunks_for_query_results(
+                            &resolved,
+                            &entity_paths,
+                            select_all_entity_paths,
+                            query,
+                        )
+                    };
 
                     let mut metas: Vec<_> = chunks
                         .iter()
@@ -1869,7 +1969,7 @@ impl RerunCloudService for RerunCloudHandler {
                     .collect();
 
                 for meta in &metadata_vec {
-                    if !entity_paths.is_empty()
+                    if !select_all_entity_paths
                         && !entity_paths.contains(&EntityPath::from(meta.entity_path.as_str()))
                     {
                         continue;
@@ -1961,6 +2061,9 @@ impl RerunCloudService for RerunCloudHandler {
 
     type FetchChunksStream = FetchChunksResponseStream;
 
+    // NOTE: OSS server does not detect source drift (a registered rrd file
+    // being mutated after registration) which Rerun Hub implements.
+    // Consider if worth having parity (RR-4577).
     async fn fetch_chunks(
         &self,
         request: tonic::Request<re_protos::cloud::v1alpha1::FetchChunksRequest>,
@@ -2454,6 +2557,14 @@ impl RerunCloudService for RerunCloudHandler {
         ))
     }
 
+    async fn cancel_tasks(
+        &self,
+        _request: tonic::Request<CancelTasksRequest>,
+    ) -> tonic::Result<tonic::Response<CancelTasksResponse>> {
+        // Cancelling tasks is a noop in the OSS server
+        Ok(tonic::Response::new(CancelTasksResponse {}))
+    }
+
     async fn do_maintenance(
         &self,
         _request: tonic::Request<re_protos::cloud::v1alpha1::DoMaintenanceRequest>,
@@ -2585,7 +2696,7 @@ fn get_entry_id_from_headers<T>(
 /// Return the equivalent latest at query
 fn latest_at_or_static(latest_at: &ext::QueryLatestAt) -> LatestAtQuery {
     match &latest_at.index {
-        Some(index) => LatestAtQuery::new(index.clone().into(), latest_at.at),
+        Some(index) => LatestAtQuery::new(*index, latest_at.at),
         None => {
             // Static only data
             LatestAtQuery::new("".into(), TimeInt::MIN)
@@ -2664,6 +2775,7 @@ impl ChunkMetadata {
 fn get_chunks_for_query_results(
     resolved: &ResolvedStore,
     entity_paths: &IntSet<EntityPath>,
+    select_all_entity_paths: bool,
     query: &ext::Query,
 ) -> (Vec<Arc<Chunk>>, Vec<ChunkId>) {
     // Contract: a Query with neither `latest_at` nor `range` means "all chunks", regardless of
@@ -2679,8 +2791,12 @@ fn get_chunks_for_query_results(
         };
     }
 
-    let paths = if entity_paths.is_empty() {
+    let paths = if select_all_entity_paths {
         resolved.all_entities()
+    } else if entity_paths.is_empty() {
+        // Per `cloud.proto`: `(select_all_entity_paths=false, entity_paths=[])`
+        // is a valid query that selects no entities and yields no results.
+        return (Vec::new(), Vec::new());
     } else {
         entity_paths.clone()
     };
@@ -2706,7 +2822,7 @@ fn get_chunks_for_query_results(
             all_missing.extend(results.missing_virtual);
         }
         if let Some(range) = &query.range {
-            let range_q = RangeQuery::new(range.index.clone().into(), range.index_range);
+            let range_q = RangeQuery::new(range.index, range.index_range);
             let results = resolved.range_relevant_chunks_for_all_components(
                 ChunkTrackingMode::Report,
                 &range_q,
@@ -2729,6 +2845,17 @@ fn get_chunks_for_query_results(
 
     (all_chunks, all_missing.into_iter().collect())
 }
+
+/// Streams `num_bytes` of pseudo-random (incompressible) bytes back to the client,
+/// split into ~1 MiB chunks.
+fn bandwidth_test_stream(
+    num_bytes: u64,
+) -> impl futures::Stream<Item = tonic::Result<DoBandwidthTestResponse>> + Send {
+    futures::stream::iter(
+        re_protos::cloud::v1alpha1::ext::BandwidthTestPayloadIter::new(num_bytes).map(Ok),
+    )
+}
+
 #[cfg(all(test, feature = "lance"))]
 mod table_vector_search_tests {
     use std::sync::Arc;

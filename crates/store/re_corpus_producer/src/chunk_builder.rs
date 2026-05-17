@@ -49,8 +49,8 @@ pub fn build_segment_chunk(
 
     for (i, packet) in packets.iter().enumerate() {
         let pts_ns = row.chunk_start_ns.saturating_add(packet.pts_ns);
-        let timepoint = TimePoint::default()
-            .with(timeline, TimeCell::from_timestamp_nanos_since_epoch(pts_ns));
+        let timepoint =
+            TimePoint::default().with(timeline, TimeCell::from_timestamp_nanos_since_epoch(pts_ns));
 
         let archetype = AudioStream::update_fields()
             .with_chunk(AudioChunk::from(packet.bytes.clone()))

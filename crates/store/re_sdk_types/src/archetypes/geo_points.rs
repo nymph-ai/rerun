@@ -28,7 +28,8 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Log a geospatial point
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_geo_points").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_geo_points")
+///         .spawn()?;
 ///
 ///     rec.log(
 ///         "rerun_hq",

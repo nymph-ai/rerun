@@ -234,9 +234,11 @@ impl ChunkStore {
             return Ok(all_diffs);
         }
 
-        if !chunk.is_sorted() {
+        if !chunk.is_row_ids_sorted() {
             return Err(ChunkStoreError::UnsortedChunk);
         }
+
+        chunk.warn_if_out_of_order();
 
         re_tracing::profile_function!();
 
@@ -546,21 +548,7 @@ impl ChunkStore {
                 let elected_chunk = self.find_and_elect_compaction_candidate(chunk);
 
                 let chunk_or_compacted = if let Some(elected_chunk) = &elected_chunk {
-                    let chunk_rowid_min = chunk.row_id_range().map(|(min, _)| min);
-                    let elected_rowid_min = elected_chunk.row_id_range().map(|(min, _)| min);
-
-                    let mut compacted = if elected_rowid_min < chunk_rowid_min {
-                        re_tracing::profile_scope!("concat");
-                        elected_chunk.concatenated(chunk)?
-                    } else {
-                        re_tracing::profile_scope!("concat");
-                        chunk.concatenated(elected_chunk)?
-                    };
-
-                    {
-                        re_tracing::profile_scope!("sort");
-                        compacted.sort_if_unsorted();
-                    }
+                    let compacted = Chunk::concat_and_sort(elected_chunk, chunk)?;
 
                     re_log::trace!(
                         "compacted {} ({} rows) and {} ({} rows) together, resulting in {} ({} rows)",
@@ -774,7 +762,7 @@ impl ChunkStore {
             let is_below_bytes_threshold = total_bytes <= chunk_max_bytes;
 
             let total_rows = (chunk.num_rows()) as u64;
-            let is_below_rows_threshold = if chunk.is_time_sorted() {
+            let is_below_rows_threshold = if chunk.all_timelines_sorted() {
                 total_rows <= chunk_max_rows
             } else {
                 total_rows <= chunk_max_rows_if_unsorted
@@ -822,7 +810,7 @@ impl ChunkStore {
                                 let is_below_bytes_threshold = total_bytes <= chunk_max_bytes;
 
                                 let total_rows = (chunk.num_rows() + candidate.num_rows()) as u64;
-                                let is_below_rows_threshold = if candidate.is_time_sorted() {
+                                let is_below_rows_threshold = if candidate.all_timelines_sorted() {
                                     total_rows <= chunk_max_rows
                                 } else {
                                     total_rows <= chunk_max_rows_if_unsorted

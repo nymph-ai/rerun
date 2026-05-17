@@ -289,7 +289,7 @@ pub type ImporterName = String;
 ///
 /// ## Registering custom importers
 ///
-/// Checkout our [guide](https://www.rerun.io/docs/concepts/logging-and-ingestion/importers/overview?speculative-link).
+/// Checkout our [guide](https://www.rerun.io/docs/concepts/logging-and-ingestion/importers/overview).
 ///
 /// ## Execution
 ///
@@ -405,6 +405,10 @@ pub enum ImporterError {
 
     #[error(transparent)]
     Mcap(#[from] ::mcap::McapError),
+
+    #[error("Video file is too large ({} bytes). \
+             Maximum supported blob size is ~2 GiB due to Arrow i32 offset limits.", .0)]
+    VideoTooLarge(usize),
 
     #[error("{}", re_error::format(.0))]
     Other(#[from] anyhow::Error),
@@ -632,6 +636,7 @@ fn test_supported_mcap_decoder_identifiers() {
     // Check that expected identifiers are present.
     assert!(as_strings.contains(&FOXGLOVE_LENSES_IDENTIFIER.to_owned()));
     assert!(as_strings.contains(&URDF_DECODER_IDENTIFIER.to_owned()));
+    assert!(as_strings.contains(&"attachments".to_owned()));
     assert!(as_strings.contains(&"raw".to_owned()));
     assert!(as_strings.contains(&"protobuf".to_owned()));
     assert!(as_strings.contains(&"ros2msg".to_owned()));

@@ -15,7 +15,7 @@ mod transform_database_store;
 mod video_asset_cache;
 mod video_stream_cache;
 
-pub use cache_trait::Cache;
+pub use cache_trait::{Cache, CacheEntryAccess};
 pub use memoizers::Memoizers;
 pub use store_cache::StoreCache;
 // TODO(andreas): Do we _really_ have to have all these caches in `re_viewer_context`?
@@ -28,7 +28,7 @@ pub use audio_stream_cache::{
 };
 pub use image_decode_cache::ImageDecodeCache;
 pub use image_stats_cache::ImageStatsCache;
-pub use tensor_stats_cache::TensorStatsCache;
+pub use tensor_stats_cache::{TensorStatsAccessor, TensorStatsCache};
 pub use transform_database_store::TransformDatabaseStoreCache;
 pub use video_asset_cache::VideoAssetCache;
 pub use video_stream_cache::{

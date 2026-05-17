@@ -11,7 +11,9 @@ from datafusion import functions as F
 
 import rerun as rr
 
-sample_5_path = Path(__file__).parents[4] / "tests" / "assets" / "rrd" / "sample_5"
+sample_5_path = (
+    Path(__file__).parents[4] / "tests" / "assets" / "rrd" / "sample_5"
+)
 
 server = rr.server.Server(datasets={"sample_dataset": sample_5_path})
 CATALOG_URL = server.url()
@@ -27,13 +29,15 @@ def create_sub_dataset(
     name: str,
     segment_ids: list[str],
 ) -> rr.catalog.DatasetEntry:
-    """Create a new dataset containing a subset of segments from an existing dataset."""
+    """Create a new dataset with a subset of segments from another dataset."""
 
     # Query the manifest for storage URLs of the selected segments
     manifest = pa.table(
         source
         .manifest()
-        .filter(F.in_list(col("rerun_segment_id"), [lit(s) for s in segment_ids]))
+        .filter(
+            F.in_list(col("rerun_segment_id"), [lit(s) for s in segment_ids])
+        )
         .select("rerun_storage_url", "rerun_layer_name")
     )
 
@@ -52,7 +56,12 @@ def create_sub_dataset(
 # region: select_segments
 # View available segments
 print("Available segments:")
-print(source_dataset.segment_table().select("rerun_segment_id").sort("rerun_segment_id"))
+print(
+    source_dataset
+    .segment_table()
+    .select("rerun_segment_id")
+    .sort("rerun_segment_id")
+)
 
 # Select a subset — here we pick the first 3 segments.
 all_segment_ids = source_dataset.segment_ids()
@@ -60,12 +69,19 @@ subset_ids = all_segment_ids[:3]
 # endregion: select_segments
 
 # region: create
-sub_dataset = create_sub_dataset(client, source_dataset, "my_experiment", subset_ids)
+sub_dataset = create_sub_dataset(
+    client, source_dataset, "my_experiment", subset_ids
+)
 # endregion: create
 
 # region: verify
 print("\nSub-dataset segments:")
-print(sub_dataset.segment_table().select("rerun_segment_id", "rerun_layer_names").sort("rerun_segment_id"))
+print(
+    sub_dataset
+    .segment_table()
+    .select("rerun_segment_id", "rerun_layer_names")
+    .sort("rerun_segment_id")
+)
 
 print("\nSub-dataset manifest:")
 print(
@@ -78,6 +94,7 @@ print(
 
 # region: cleanup
 # When done experimenting, delete the sub-dataset.
-# This only removes the dataset entry — the underlying RRD storage is not affected.
+# This only removes the dataset entry — the underlying RRD storage is not
+# affected.
 sub_dataset.delete()
 # endregion: cleanup

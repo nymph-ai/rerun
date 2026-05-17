@@ -38,7 +38,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rerun::external::glam::vec3;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_capsule3d_batch").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_capsule3d_batch")
+///             .spawn()?;
 ///
 ///     rec.log(
 ///         "capsules",

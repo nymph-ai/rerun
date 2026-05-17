@@ -73,9 +73,10 @@ pub use self::blueprint_id::{
 };
 pub use self::cache::{
     AudioAssetCache, AudioAssetLoadError, AudioStreamCache, AudioStreamProcessingError, Cache,
-    ImageDecodeCache, ImageStatsCache, Memoizers, PlayableAudioAsset, PlayableAudioStream,
-    SharablePlayableAudioStream, SharablePlayableVideoStream, StoreCache, TensorStatsCache,
-    TransformDatabaseStoreCache, VideoAssetCache, VideoStreamCache, VideoStreamProcessingError,
+    CacheEntryAccess, ImageDecodeCache, ImageStatsCache, Memoizers, PlayableAudioAsset,
+    PlayableAudioStream, SharablePlayableAudioStream, SharablePlayableVideoStream, StoreCache,
+    TensorStatsAccessor, TensorStatsCache, TransformDatabaseStoreCache, VideoAssetCache,
+    VideoStreamCache, VideoStreamProcessingError,
 };
 pub use self::collapsed_id::{CollapseItem, CollapseScope, CollapsedId};
 pub use self::command_sender::{
@@ -97,7 +98,8 @@ pub use self::image_info::{
     ColormapWithRange, ImageInfo, StoredBlobCacheKey, resolution_of_image_at,
 };
 pub use self::item::{
-    DataResultInteractionAddress, Item, resolve_mono_instance_path, resolve_mono_instance_path_item,
+    DataResultInteractionAddress, Item, RedapEntryKind, resolve_mono_instance_path,
+    resolve_mono_instance_path_item,
 };
 pub use self::item_collection::{ItemCollection, ItemContext};
 pub use self::maybe_mut_ref::MaybeMutRef;
@@ -117,8 +119,9 @@ pub use self::store_view_context::StoreViewContext;
 pub use self::tables::{TableStore, TableStores};
 pub use self::tensor::{ImageStats, TensorStats};
 pub use self::time_control::{
-    MoveDirection, MoveSpeed, TIME_PANEL_PATH, TimeControl, TimeControlCommand,
-    TimeControlResponse, TimeControlUpdateParams, TimeView, time_panel_blueprint_entity_path,
+    MoveDirection, MoveSpeed, PreviewRecordingsDb, TIME_PANEL_PATH, TimeControl,
+    TimeControlCommand, TimeControlDb, TimeControlResponse, TimeControlUpdateParams, TimeView,
+    time_panel_blueprint_entity_path,
 };
 pub use self::typed_entity_collections::{
     BufferAndFormatMatch, DatatypeMatch, IndicatedEntities, PerVisualizerInstruction,
@@ -132,7 +135,7 @@ pub use self::utils::{
 };
 pub use self::view::{
     BufferAndFormatConstraint, DataResult, IdentifiedViewSystem, OptionalViewEntityHighlight,
-    PerSystemEntities, RecommendedMappings, RecommendedView, RecommendedVisualizers,
+    PerSystemEntities, PreviewState, RecommendedMappings, RecommendedView, RecommendedVisualizers,
     SingleRequiredComponentConstraint, SystemExecutionOutput, ViewClass, ViewClassExt,
     ViewClassLayoutPriority, ViewClassPlaceholder, ViewClassRegistry, ViewClassRegistryError,
     ViewContext, ViewContextCollection, ViewContextSystem, ViewContextSystemOncePerFrameResult,
@@ -154,6 +157,7 @@ pub mod external {
 }
 
 // Re-export
+pub use re_byte_size::SizeBytes;
 pub use re_chunk_store::MissingChunkReporter;
 
 // ---------------------------------------------------------------------------

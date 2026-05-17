@@ -4,7 +4,7 @@
 //! including all log output.
 //!
 //! This sort of telemetry is always disabled on our OSS binaries, and is only used for
-//! * The Rerun Cloud infrastructure
+//! * The Rerun Hub infrastructure
 //! * Profiling by Rerun developer
 //!
 //! Logging strategy
@@ -55,6 +55,7 @@ mod shared_reader;
 mod telemetry;
 mod trace_id_format;
 mod tracestate;
+mod tracing_session;
 mod utils;
 
 use std::collections::HashMap;
@@ -63,7 +64,7 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 
 pub use self::args::{LogFormat, TelemetryArgs};
 pub use self::grpc::{
-    BenchmarkIdLayer, ClientTelemetryLayer, GrpcMakeSpan, GrpcOnEos, GrpcOnFirstBodyChunk,
+    ClientOnResponse, ClientTelemetryLayer, GrpcMakeSpan, GrpcOnEos, GrpcOnFirstBodyChunk,
     GrpcOnRequest, GrpcOnResponse, GrpcOnResponseOptions, ServerTelemetryLayer,
     SpanMetadataCleanupLayer, TelemetryLayerOptions, TracingInjectorInterceptor,
     new_client_telemetry_layer, new_server_telemetry_layer,
@@ -73,7 +74,14 @@ pub use self::utils::to_short_str;
 
 #[cfg(feature = "pyo3")]
 pub use self::python_bridge::{
-    TRACE_CONTEXT_VAR_NAME, extract_trace_context_from_contextvar, get_trace_context_var,
+    RERUN_SESSION_VAR_NAME, TRACE_CONTEXT_VAR_NAME, current_rerun_session_id_from_contextvar,
+    extract_trace_context_from_contextvar, get_rerun_session_var, get_trace_context_var,
+};
+
+pub use self::tracing_session::{
+    RERUN_SESSION_TRACESTATE_KEY, RerunTracingSessionId, current_rerun_session_id,
+    dec_active_tracing_session_count, inc_active_tracing_session_count,
+    with_current_tracing_session,
 };
 
 pub mod external {

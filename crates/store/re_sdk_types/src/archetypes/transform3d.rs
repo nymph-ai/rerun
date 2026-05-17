@@ -42,9 +42,11 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use std::f32::consts::TAU;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_transform3d").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_transform3d")
+///         .spawn()?;
 ///
-///     let arrow = rerun::Arrows3D::from_vectors([(0.0, 1.0, 0.0)]).with_origins([(0.0, 0.0, 0.0)]);
+///     let arrow = rerun::Arrows3D::from_vectors([(0.0, 1.0, 0.0)])
+///         .with_origins([(0.0, 0.0, 0.0)]);
 ///
 ///     rec.log("base", &arrow)?;
 ///
@@ -58,7 +60,10 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///     rec.log(
 ///         "base/rotated_scaled",
 ///         &rerun::Transform3D::from_rotation_scale(
-///             rerun::RotationAxisAngle::new([0.0, 0.0, 1.0], rerun::Angle::from_radians(TAU / 8.0)),
+///             rerun::RotationAxisAngle::new(
+///                 [0.0, 0.0, 1.0],
+///                 rerun::Angle::from_radians(TAU / 8.0),
+///             ),
 ///             rerun::Scale3D::from(2.0),
 ///         ),
 ///     )?;
@@ -81,15 +86,18 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Update a transform over time
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec =
-///         rerun::RecordingStreamBuilder::new("rerun_example_transform3d_row_updates").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new(
+///         "rerun_example_transform3d_row_updates",
+///     )
+///     .spawn()?;
 ///
 ///     rec.set_time_sequence("tick", 0);
 ///     rec.log(
 ///         "box",
 ///         &[
 ///             &rerun::Boxes3D::from_half_sizes([(4.0, 2.0, 1.0)])
-///                 .with_fill_mode(rerun::FillMode::Solid) as &dyn rerun::AsComponents,
+///                 .with_fill_mode(rerun::FillMode::Solid)
+///                 as &dyn rerun::AsComponents,
 ///             &rerun::TransformAxes3D::new(10.0),
 ///         ],
 ///     )?;
@@ -102,7 +110,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///                 .with_translation([0.0, 0.0, t as f32 / 10.0])
 ///                 .with_rotation(rerun::RotationAxisAngle::new(
 ///                     [0.0, 1.0, 0.0],
-///                     rerun::Angle::from_radians(truncated_radians((t * 4) as f32)),
+///                     rerun::Angle::from_radians(truncated_radians(
+///                         (t * 4) as f32,
+///                     )),
 ///                 )),
 ///         )?;
 ///     }
@@ -127,23 +137,32 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Update a transform over time, in a single operation
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec =
-///         rerun::RecordingStreamBuilder::new("rerun_example_transform3d_column_updates").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new(
+///         "rerun_example_transform3d_column_updates",
+///     )
+///     .spawn()?;
 ///
 ///     rec.set_time_sequence("tick", 0);
 ///     rec.log(
 ///         "box",
 ///         &[
 ///             &rerun::Boxes3D::from_half_sizes([(4.0, 2.0, 1.0)])
-///                 .with_fill_mode(rerun::FillMode::Solid) as &dyn rerun::AsComponents,
+///                 .with_fill_mode(rerun::FillMode::Solid)
+///                 as &dyn rerun::AsComponents,
 ///             &rerun::TransformAxes3D::new(10.0),
 ///         ],
 ///     )?;
 ///
 ///     let translations = (0..100).map(|t| [0.0, 0.0, t as f32 / 10.0]);
-///     let rotations = (0..100)
-///         .map(|t| truncated_radians((t * 4) as f32))
-///         .map(|rad| rerun::RotationAxisAngle::new([0.0, 1.0, 0.0], rerun::Angle::from_radians(rad)));
+///     let rotations =
+///         (0..100)
+///             .map(|t| truncated_radians((t * 4) as f32))
+///             .map(|rad| {
+///                 rerun::RotationAxisAngle::new(
+///                     [0.0, 1.0, 0.0],
+///                     rerun::Angle::from_radians(rad),
+///                 )
+///             });
 ///
 ///     let ticks = rerun::TimeColumn::new_sequence("tick", 1..101);
 ///     rec.send_columns(
@@ -177,16 +196,17 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// use rerun::AsComponents;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec =
-///         rerun::RecordingStreamBuilder::new("rerun_example_transform3d_partial_updates").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new(
+///         "rerun_example_transform3d_partial_updates",
+///     )
+///     .spawn()?;
 ///
 ///     // Set up a 3D box.
 ///     rec.log(
 ///         "box",
-///         &[
-///             &rerun::Boxes3D::from_half_sizes([(4.0, 2.0, 1.0)])
-///                 .with_fill_mode(rerun::FillMode::Solid) as &dyn AsComponents,
-///         ],
+///         &[&rerun::Boxes3D::from_half_sizes([(4.0, 2.0, 1.0)])
+///             .with_fill_mode(rerun::FillMode::Solid)
+///             as &dyn AsComponents],
 ///     )?;
 ///
 ///     // Update only the rotation of the box.
@@ -194,10 +214,12 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///         let rad = truncated_radians((deg * 4) as f32);
 ///         rec.log(
 ///             "box",
-///             &rerun::Transform3D::new().with_rotation(rerun::RotationAxisAngle::new(
-///                 [0.0, 1.0, 0.0],
-///                 rerun::Angle::from_radians(rad),
-///             )),
+///             &rerun::Transform3D::new().with_rotation(
+///                 rerun::RotationAxisAngle::new(
+///                     [0.0, 1.0, 0.0],
+///                     rerun::Angle::from_radians(rad),
+///                 ),
+///             ),
 ///         )?;
 ///     }
 ///
@@ -205,7 +227,11 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///     for t in 0..=50 {
 ///         rec.log(
 ///             "box",
-///             &rerun::Transform3D::new().with_translation([0.0, 0.0, t as f32 / 10.0]),
+///             &rerun::Transform3D::new().with_translation([
+///                 0.0,
+///                 0.0,
+///                 t as f32 / 10.0,
+///             ]),
 ///         )?;
 ///     }
 ///
@@ -214,10 +240,12 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///         let rad = truncated_radians(((deg + 45) * 4) as f32);
 ///         rec.log(
 ///             "box",
-///             &rerun::Transform3D::new().with_rotation(rerun::RotationAxisAngle::new(
-///                 [0.0, 1.0, 0.0],
-///                 rerun::Angle::from_radians(rad),
-///             )),
+///             &rerun::Transform3D::new().with_rotation(
+///                 rerun::RotationAxisAngle::new(
+///                     [0.0, 1.0, 0.0],
+///                     rerun::Angle::from_radians(rad),
+///                 ),
+///             ),
 ///         )?;
 ///     }
 ///

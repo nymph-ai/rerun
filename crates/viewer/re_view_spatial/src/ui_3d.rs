@@ -48,6 +48,20 @@ pub struct View3DState {
     pub show_per_entity_bbox: bool,
 }
 
+impl re_byte_size::SizeBytes for View3DState {
+    fn heap_size_bytes(&self) -> u64 {
+        let Self {
+            eye_state,
+            scene_view_coordinates: _,
+            eye_interact_fade_in: _,
+            eye_interact_fade_change_time: _,
+            show_smoothed_bbox: _,
+            show_per_entity_bbox: _,
+        } = self;
+        eye_state.heap_size_bytes()
+    }
+}
+
 impl Default for View3DState {
     fn default() -> Self {
         Self {
@@ -276,7 +290,7 @@ impl SpatialView3D {
                 .highlights
                 .any_outlines()
                 .then(|| re_view::outline_config(ui.ctx())),
-            blend_with_background: false,
+            blend_with_background: re_renderer::BlendWithBackground::No,
             picking_config,
         };
 
@@ -295,7 +309,7 @@ impl SpatialView3D {
                 | Item::DataSource(_)
                 | Item::StoreId(_)
                 | Item::Container(_)
-                | Item::RedapEntry(_)
+                | Item::RedapEntry { .. }
                 | Item::RedapServer(_)
                 | Item::TableId(_) => None,
 

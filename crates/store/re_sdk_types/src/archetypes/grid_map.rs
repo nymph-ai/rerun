@@ -25,14 +25,13 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 ///
 /// This archetype is intended for robotics applications like occupancy maps or navigation costmaps.
 ///
-/// ⚠️ **This type is _unstable_ and may change significantly in a way that the data won't be backwards compatible.**
-///
 /// ## Example
 ///
 /// ### Simple occupancy grid map
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_grid_map").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_grid_map").spawn()?;
 ///
 ///     let width: usize = 64;
 ///     let height: usize = 64;

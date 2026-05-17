@@ -34,12 +34,15 @@ re_analytics.workspace = true
 re_arrow_util.workspace = true
 re_backoff.workspace = true
 re_dataframe.workspace = true
-re_log.workspace = true
+re_format.workspace = true
 re_log_encoding = { workspace = true, features = ["decoder"] }
-re_redap_client.workspace = true
 re_log_types.workspace = true
+re_log.workspace = true
 re_protos.workspace = true
+re_redap_client.workspace = true
 re_sorbet.workspace = true
+re_byte_size.workspace = true
+re_tracing.workspace = true
 re_uri.workspace = true
 
 # External dependencies:
@@ -55,6 +58,7 @@ opentelemetry.workspace = true
 opentelemetry-proto = { workspace = true, features = ["gen-tonic-messages", "trace"] }
 parking_lot.workspace = true
 tokio.workspace = true
+jiff.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
@@ -67,7 +71,6 @@ reqwest.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures.workspace = true
-tonic-web-wasm-client.workspace = true
 wasm-bindgen-futures.workspace = true
 
 # These are used by Datafusion but the required features are not set for wasm build.
@@ -76,4 +79,5 @@ getrandom = { workspace = true, features = ["wasm_js"] }
 
 
 [dev-dependencies]
+re_redap_client = { workspace = true, features = ["test_utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }

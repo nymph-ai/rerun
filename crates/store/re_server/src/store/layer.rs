@@ -76,8 +76,7 @@ impl Layer {
 
             ResolvedStore::Lazy(l) => {
                 let header = re_log_encoding::MessageHeader::ENCODED_SIZE_BYTES as u64;
-                let manifest = l.manifest();
-                manifest
+                l.manifest()
                     .col_chunk_byte_size()
                     .iter()
                     .map(|size| size + header)
@@ -120,9 +119,9 @@ impl Layer {
 
     fn rrd_manifest_from_lazy_cache(
         &self,
-        lazy: &Arc<dyn re_chunk_store::LazyStore>,
+        lazy: &Arc<dyn re_chunk_store::LazyStoreLike>,
     ) -> Result<RawRrdManifest, super::Error> {
-        let mut manifest = (*lazy.raw_manifest()).clone();
+        let mut manifest = lazy.raw_manifest().as_ref().clone();
 
         let chunk_keys = manifest
             .col_chunk_id()
@@ -162,10 +161,8 @@ impl Layer {
             // There's no compression on the OSS server (no disk), so "compressed size" equals
             // uncompressed size. The chunk_key is what's used to actually fetch data.
             let byte_size_uncompressed = chunk.heap_size_bytes();
-            let uncompressed_byte_span = re_span::Span {
-                start: offset,
-                len: byte_size_uncompressed,
-            };
+            let uncompressed_byte_span =
+                re_span::Span::from_start_len(offset, byte_size_uncompressed);
             offset += byte_size_uncompressed;
 
             builder
@@ -205,8 +202,7 @@ impl Layer {
             }
             ResolvedStore::Lazy(l) => {
                 let mut ranges = BTreeMap::new();
-                let manifest = l.manifest();
-                for per_entity in manifest.temporal_map().values() {
+                for per_entity in l.manifest().temporal_map().values() {
                     for (timeline, per_component) in per_entity {
                         for per_chunk in per_component.values() {
                             for entry in per_chunk.values() {
@@ -260,8 +256,9 @@ mod tests {
     use arrow::array::Array as _;
     use re_arrow_util::ArrowArrayDowncastRef as _;
     use re_chunk_store::external::re_chunk;
-    use re_chunk_store::{Chunk, ChunkStore, ChunkStoreConfig, ChunkStoreHandle, LazyRrdStore};
+    use re_chunk_store::{Chunk, ChunkStore, ChunkStoreConfig, ChunkStoreHandle, LazyStore};
     use re_log_encoding::EncodingOptions;
+    use re_log_encoding::RrdChunkProvider;
     use re_log_types::{
         EntityPath, LogMsg, SetStoreInfo, StoreId, StoreInfo, StoreKind, StoreSource, TimePoint,
         Timeline,
@@ -330,7 +327,7 @@ mod tests {
     fn rrd_manifest_lazy_and_eager_produce_equivalent_output() {
         let (store_id, chunks) = build_chunks();
 
-        // Eager backend: in-memory `ChunkStore`. `ALL_DISABLED` matches `LazyRrdStore`'s internal
+        // Eager backend: in-memory `ChunkStore`. `ALL_DISABLED` matches `LazyStore`'s internal
         // config, so both sides hold the same chunk set (otherwise compaction on insert would
         // merge them and the manifests would no longer be row-wise comparable).
         let mut eager_store = ChunkStore::new(store_id.clone(), ChunkStoreConfig::ALL_DISABLED);
@@ -353,9 +350,10 @@ mod tests {
             .unwrap();
         let raw_manifest = Arc::new(footer.manifests[&store_id].clone());
         let store_file = std::fs::File::open(&rrd_path).unwrap();
-        let lazy =
-            Arc::new(LazyRrdStore::try_new(store_file, rrd_path.clone(), raw_manifest).unwrap());
-        let lazy_layer = Layer::new(StoreSlotId::new(), ResolvedStore::Lazy(lazy));
+        let provider =
+            Arc::new(RrdChunkProvider::try_from_file(store_file, &rrd_path, raw_manifest).unwrap());
+        let lazy = Arc::new(LazyStore::new(provider));
+        let lazy_layer = Layer::new(StoreSlotId::new(), ResolvedStore::from_lazy(lazy));
 
         let lazy_manifest = lazy_layer.rrd_manifest().unwrap();
         let eager_manifest = eager_layer.rrd_manifest().unwrap();

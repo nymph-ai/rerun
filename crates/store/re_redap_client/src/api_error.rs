@@ -33,6 +33,7 @@ pub enum ApiErrorKind {
     Timeout,
     Internal,
     InvalidArguments,
+    FailedPrecondition,
     ResourcesExhausted,
 
     /// Failed to decode data received from the server (e.g. protobuf → Arrow conversion).
@@ -55,6 +56,7 @@ impl From<tonic::Code> for ApiErrorKind {
             tonic::Code::Unimplemented => Self::Unimplemented,
             tonic::Code::Unavailable => Self::Connection,
             tonic::Code::InvalidArgument => Self::InvalidArguments,
+            tonic::Code::FailedPrecondition => Self::FailedPrecondition,
             tonic::Code::DeadlineExceeded => Self::Timeout,
             _ => Self::Internal,
         }
@@ -73,6 +75,7 @@ impl ApiErrorKind {
             | Self::Unauthenticated
             | Self::Unimplemented
             | Self::InvalidArguments
+            | Self::FailedPrecondition
             | Self::Deserialization
             | Self::Serialization
             | Self::InvalidServer => false,
@@ -91,6 +94,7 @@ impl std::fmt::Display for ApiErrorKind {
             Self::Connection => write!(f, "Connection"),
             Self::Internal => write!(f, "Internal"),
             Self::InvalidArguments => write!(f, "InvalidArguments"),
+            Self::FailedPrecondition => write!(f, "FailedPrecondition"),
             Self::ResourcesExhausted => write!(f, "ResourcesExhausted"),
             Self::Deserialization => write!(f, "Deserialization"),
             Self::Serialization => write!(f, "Serialization"),
@@ -239,6 +243,10 @@ impl ApiError {
         }
     }
 
+    pub fn invalid_arguments(message: impl Into<String>) -> Self {
+        Self::new(ApiErrorKind::InvalidArguments, message)
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(ApiErrorKind::Internal, message)
     }
@@ -301,9 +309,27 @@ impl ApiError {
         }
     }
 
+    /// Raised when `GET /version` against the requested origin returns a non-2xx response.
+    ///
+    /// The included status line and body snippet usually tell the user whether the path is
+    /// wrong (404 from a non-Rerun HTTP server), the server is down (5xx), or they hit a
+    /// reverse proxy that redirected somewhere unexpected. Connection-refused (wrong port
+    /// or server not running) hits a different error path above.
     #[expect(clippy::needless_pass_by_value)]
-    pub fn invalid_server(origin: re_uri::Origin, hint: Option<&str>) -> Self {
-        let mut msg = format!("{origin} is not a valid Rerun server");
+    pub fn invalid_server_with_response(
+        origin: re_uri::Origin,
+        status: u16,
+        status_text: &str,
+        body_snippet: Option<&str>,
+        hint: Option<&str>,
+    ) -> Self {
+        let mut msg = format!(
+            "{origin} is not a valid Rerun server (GET /version returned HTTP {status} {status_text})"
+        );
+        if let Some(body) = body_snippet.filter(|s| !s.is_empty()) {
+            msg.push_str(": ");
+            msg.push_str(body);
+        }
         if let Some(hint) = hint {
             msg.push_str(". ");
             msg.push_str(hint);

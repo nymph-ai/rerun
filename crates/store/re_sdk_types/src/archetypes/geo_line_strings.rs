@@ -30,7 +30,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Log a geospatial line string
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_geo_line_strings").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_geo_line_strings")
+///             .spawn()?;
 ///
 ///     rec.log(
 ///         "colorado",

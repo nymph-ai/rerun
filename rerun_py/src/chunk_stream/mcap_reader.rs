@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use re_chunk::Chunk;
 use re_log_types::TimeType;
-use re_mcap::{DecoderIdentifier, SelectedDecoders};
+use re_mcap::{DecoderIdentifier, SelectedDecoders, TopicFilter};
 
 use super::error::ChunkPipelineError;
 use super::py_stream::PyLazyChunkStreamInternal;
@@ -29,12 +29,16 @@ pub struct PyMcapReaderInternal {
 #[pymethods]
 impl PyMcapReaderInternal {
     #[new]
-    #[pyo3(text_signature = "(self, path, timeline_type, timestamp_offset_ns, decoders)")]
+    #[pyo3(
+        text_signature = "(self, path, timeline_type, timestamp_offset_ns, decoders, include_topic_regex, exclude_topic_regex)"
+    )]
     fn new(
         path: &str,
         timeline_type: &str,
         timestamp_offset_ns: Option<i64>,
         decoders: Option<Vec<String>>,
+        include_topic_regex: Option<Vec<String>>,
+        exclude_topic_regex: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let path = PathBuf::from(path);
         if !path.exists() {
@@ -75,8 +79,11 @@ impl PyMcapReaderInternal {
             }
         };
 
+        let topic_filter = compile_topic_filter(include_topic_regex, exclude_topic_regex)?;
+
         let loader = re_importer::importer_mcap::McapImporter::new(&selected_decoders)
-            .with_raw_fallback(true);
+            .with_raw_fallback(true)
+            .with_topic_filter(topic_filter);
 
         Ok(Self {
             path,
@@ -154,7 +161,7 @@ impl ChunkStreamFactory for McapStreamFactory {
             .name("mcap-chunk-source".into())
             .spawn(move || {
                 let result =
-                    loader.emit_chunks(&mmap, timeline_type, timestamp_offset_ns, &mut |chunk| {
+                    loader.emit_chunks(&mmap, timeline_type, timestamp_offset_ns, &|chunk| {
                         // Stop producing if the receiver has been dropped.
                         re_quota_channel::send_crossbeam(&tx, Ok(Arc::new(chunk))).ok();
                     });
@@ -188,6 +195,34 @@ impl ChunkStream for McapStream {
             Err(crossbeam::channel::RecvError) => Ok(None), // channel closed — decoding finished
         }
     }
+}
+
+fn compile_topic_filter(
+    include: Option<Vec<String>>,
+    exclude: Option<Vec<String>>,
+) -> PyResult<TopicFilter> {
+    let include = include.unwrap_or_default();
+    let exclude = exclude.unwrap_or_default();
+
+    for pattern in &include {
+        TopicFilter::default()
+            .with_include_patterns(std::slice::from_ref(pattern))
+            .map_err(|err| {
+                PyValueError::new_err(format!("Invalid include topic regex {pattern:?}: {err}"))
+            })?;
+    }
+    for pattern in &exclude {
+        TopicFilter::default()
+            .with_exclude_patterns(std::slice::from_ref(pattern))
+            .map_err(|err| {
+                PyValueError::new_err(format!("Invalid exclude topic regex {pattern:?}: {err}"))
+            })?;
+    }
+
+    TopicFilter::default()
+        .with_include_patterns(&include)
+        .and_then(|filter| filter.with_exclude_patterns(&exclude))
+        .map_err(|err| PyValueError::new_err(format!("Invalid topic regex: {err}")))
 }
 
 fn mmap_file(path: &Path) -> Result<memmap2::Mmap, ChunkPipelineError> {

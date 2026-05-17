@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import numpy as np
 
-__version__ = "0.32.0-alpha.1+dev"
-__version_info__ = (0, 32, 0, "alpha.1")
+__version__ = "0.33.0-alpha.1+dev"
+__version_info__ = (0, 33, 0, "alpha.1")
 
 if sys.version_info < (3, 10):  # noqa: UP036
     raise RuntimeError("Rerun SDK requires Python 3.10 or later.")
@@ -75,6 +75,7 @@ from ._send_columns import (
     send_columns as send_columns,
 )
 from ._send_dataframe import (
+    RECORDING_PROPERTIES_PATH as RECORDING_PROPERTIES_PATH,
     RERUN_KIND as RERUN_KIND,
     RERUN_KIND_CONTROL as RERUN_KIND_CONTROL,
     RERUN_KIND_INDEX as RERUN_KIND_INDEX,
@@ -86,6 +87,9 @@ from ._send_dataframe import (
     SORBET_IS_TABLE_INDEX as SORBET_IS_TABLE_INDEX,
     send_dataframe as send_dataframe,
     send_record_batch as send_record_batch,
+)
+from ._tracing_session import (
+    tracing_session as tracing_session,
 )
 from .any_batch_value import (
     AnyBatchValue as AnyBatchValue,
@@ -111,6 +115,7 @@ from .archetypes import (
     CoordinateFrame as CoordinateFrame,
     Cylinders3D as Cylinders3D,
     DepthImage as DepthImage,
+    Ellipses2D as Ellipses2D,
     Ellipsoids3D as Ellipsoids3D,
     EncodedDepthImage as EncodedDepthImage,
     EncodedImage as EncodedImage,
@@ -135,7 +140,8 @@ from .archetypes import (
     SegmentationImage as SegmentationImage,
     SeriesLines as SeriesLines,
     SeriesPoints as SeriesPoints,
-    Status as Status,
+    StateChange as StateChange,
+    StateConfiguration as StateConfiguration,
     Tensor as Tensor,
     TextDocument as TextDocument,
     TextLog as TextLog,
@@ -210,7 +216,7 @@ from .sinks import (
     disconnect as disconnect,
     save as save,
     send_blueprint as send_blueprint,
-    send_recording as send_recording,
+    send_recording as send_recording,  # ty:ignore[deprecated]
     serve_grpc as serve_grpc,
     set_sinks as set_sinks,
     spawn as spawn,

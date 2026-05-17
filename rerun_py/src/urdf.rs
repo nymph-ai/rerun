@@ -1,16 +1,22 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError};
+use arrow::array::{Array as _, ArrayData, ListArray, make_array};
+use arrow::pyarrow::{PyArrowType, ToPyArrow as _};
+use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use re_sdk::external::re_importer::{UrdfTree, urdf_joint_transform};
 use re_sdk::external::urdf_rs::{Joint, JointType, Link, Mimic};
 use re_sdk::{EntityPath, TimePoint};
 
+use crate::chunk_stream::PyLazyChunkStreamInternal;
+use crate::chunk_stream::stream::LazyChunkStream;
+use crate::chunk_stream::urdf_tree_stream::UrdfTreeStreamFactory;
 use crate::python_bridge::{PyRecordingStream, get_data_recording};
 
 /// A `.urdf` file loaded into memory (excluding any mesh files).
 #[pyclass(name = "_UrdfTreeInternal", module = "rerun_bindings.rerun_bindings")]
-pub struct PyUrdfTree(UrdfTree);
+pub struct PyUrdfTree(Arc<UrdfTree>);
 
 #[pymethods]
 impl PyUrdfTree {
@@ -37,7 +43,7 @@ impl PyUrdfTree {
         if let Some(entity_path) = static_transform_entity_path {
             tree = tree.with_static_transform_entity(entity_path);
         }
-        Ok(Self(tree))
+        Ok(Self(Arc::new(tree)))
     }
 
     /// Name of the robot defined in this URDF.
@@ -128,6 +134,57 @@ impl PyUrdfTree {
         recording.send_chunks(chunks);
 
         Ok(())
+    }
+
+    /// Return a new lazy stream over all chunks emitted from this URDF tree.
+    #[pyo3(signature = (*, include_joint_transforms = true))]
+    pub(crate) fn stream(&self, include_joint_transforms: bool) -> PyLazyChunkStreamInternal {
+        PyLazyChunkStreamInternal::new(LazyChunkStream::from_factory(UrdfTreeStreamFactory::new(
+            Arc::clone(&self.0),
+            include_joint_transforms,
+        )))
+    }
+
+    /// Compute transform batches from per-row joint name and value arrays.
+    #[pyo3(signature = (names, values, *, clamp = false))]
+    pub fn compute_joint_transform_batches(
+        &self,
+        py: Python<'_>,
+        names: PyArrowType<ArrayData>,
+        values: PyArrowType<ArrayData>,
+        clamp: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let names = make_array(names.0);
+        let values = make_array(values.0);
+
+        let names = names.as_any().downcast_ref::<ListArray>().ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "joint names must be a list array, got {:?}",
+                names.data_type()
+            ))
+        })?;
+        let values = values.as_any().downcast_ref::<ListArray>().ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "joint values must be a list array, got {:?}",
+                values.data_type()
+            ))
+        })?;
+
+        let result = self
+            .0
+            .compute_joint_transform_batches(names, values, clamp)
+            .map_err(|err| {
+                if matches!(
+                    err.downcast_ref::<urdf_joint_transform::Error>(),
+                    Some(urdf_joint_transform::Error::UnsupportedJointType(_))
+                ) {
+                    PyNotImplementedError::new_err(err.to_string())
+                } else {
+                    PyValueError::new_err(err.to_string())
+                }
+            })?;
+
+        result.to_data().to_pyarrow(py).map(|obj| obj.unbind())
     }
 
     fn __repr__(&self) -> String {

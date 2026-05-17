@@ -15,27 +15,24 @@
 //! In the viewer these logs, if >= info, become notifications. See
 //! `re_ui::notifications` for more information.
 
+#[cfg(feature = "setup")]
 mod channel_logger;
 mod debug_assert;
-mod result_extensions;
-
 #[cfg(feature = "setup")]
-mod multi_logger;
-
+mod event_visitor;
+mod result_extensions;
 #[cfg(feature = "setup")]
 mod setup;
+#[cfg(feature = "setup")]
+pub use channel_logger::{LogMsg, Receiver, Sender, add_log_msg_receiver};
 
-#[cfg(all(feature = "setup", target_arch = "wasm32"))]
-mod web_logger;
-
-pub use channel_logger::*;
-pub use log::{Level, LevelFilter};
+pub use tracing::Level;
+#[cfg(feature = "setup")]
+pub use tracing_subscriber::filter::LevelFilter;
 // The `re_log::info_once!(…)` etc are nice helpers, but the `log-once` crate is a bit lacking.
 // In the future we should implement our own macros to de-duplicate based on the callsite,
 // similar to how the log console in a browser will automatically suppress duplicates.
-pub use log_once::{debug_once, error_once, info_once, log_once, trace_once, warn_once};
-#[cfg(feature = "setup")]
-pub use multi_logger::{MultiLoggerNotSetupError, add_boxed_logger, add_logger};
+pub use log_once::{debug_once, error_once, info_once, trace_once, warn_once};
 pub use result_extensions::ResultExt;
 #[cfg(all(feature = "setup", not(target_arch = "wasm32")))]
 pub use setup::PanicOnWarnScope;
@@ -43,6 +40,20 @@ pub use setup::PanicOnWarnScope;
 pub use setup::{setup_logging, setup_logging_with_filter};
 // The tracing macros support more syntax features than the log, that's why we use them:
 pub use tracing::{debug, error, info, trace, warn};
+
+/// Log once at the given [`Level`].
+#[macro_export]
+macro_rules! log_once {
+    ($level:expr, $($arg:tt)+) => {
+        match $level {
+            $crate::Level::ERROR => $crate::error_once!($($arg)+),
+            $crate::Level::WARN => $crate::warn_once!($($arg)+),
+            $crate::Level::INFO => $crate::info_once!($($arg)+),
+            $crate::Level::DEBUG => $crate::debug_once!($($arg)+),
+            $crate::Level::TRACE => $crate::trace_once!($($arg)+),
+        }
+    };
+}
 
 /// Log a warning in debug builds, or a debug message in release builds.
 ///
@@ -236,29 +247,29 @@ fn add_builtin_log_filter(base_log_filter: &str) -> String {
 }
 
 /// Should we log this message given the filter?
-fn is_log_enabled(filter: log::LevelFilter, metadata: &log::Metadata<'_>) -> bool {
+#[cfg(feature = "setup")]
+fn is_log_enabled(
+    filter: tracing_subscriber::filter::LevelFilter,
+    metadata: &tracing::Metadata<'_>,
+) -> bool {
     if CRATES_AT_ERROR_LEVEL
         .iter()
         .any(|crate_name| metadata.target().starts_with(crate_name))
     {
-        return metadata.level() <= log::LevelFilter::Error;
-    }
-
-    if CRATES_AT_WARN_LEVEL
+        *metadata.level() <= tracing_subscriber::filter::LevelFilter::ERROR
+    } else if CRATES_AT_WARN_LEVEL
         .iter()
         .any(|crate_name| metadata.target().starts_with(crate_name))
     {
-        return metadata.level() <= log::LevelFilter::Warn;
-    }
-
-    if CRATES_AT_INFO_LEVEL
+        *metadata.level() <= tracing_subscriber::filter::LevelFilter::WARN
+    } else if CRATES_AT_INFO_LEVEL
         .iter()
         .any(|crate_name| metadata.target().starts_with(crate_name))
     {
-        return metadata.level() <= log::LevelFilter::Info;
+        *metadata.level() <= tracing_subscriber::filter::LevelFilter::INFO
+    } else {
+        *metadata.level() <= filter
     }
-
-    metadata.level() <= filter
 }
 
 /// Check if an environment variable is set to a truthy value.
@@ -280,6 +291,20 @@ pub fn env_var_is_truthy(var_name: &str) -> bool {
             v == "1" || v == "true" || v == "yes"
         })
         .unwrap_or(false)
+}
+
+/// Is `RERUN_VERY_STRICT` set to a truthy value?
+///
+/// In very strict mode, Rerun may panic anywhere, at any time, for any reason whenever it
+/// detects something it does not like — e.g. out-of-order chunks, unsorted timelines,
+/// or other invariant violations. Very strict mode is meant for development, testing and
+/// CI, never for production: enable it to catch silent corruption early.
+///
+/// The result is cached on the first call, so subsequent calls are very cheap and
+/// changing the environment variable at runtime has no effect.
+pub fn is_rerun_very_strict() -> bool {
+    static VERY_STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VERY_STRICT.get_or_init(|| env_var_is_truthy("RERUN_VERY_STRICT"))
 }
 
 /// Shorten a path to a Rust source file.

@@ -67,10 +67,7 @@ impl LanceCorpusProvider {
     /// [`ChunkProvider::load_chunks`] surface — `block_on` runs on this
     /// handle so the calling thread (typically the chunk-store reader)
     /// doesn't need to be inside a Tokio context.
-    pub async fn build(
-        config: CorpusConfig,
-        runtime: tokio::runtime::Handle,
-    ) -> Result<Self> {
+    pub async fn build(config: CorpusConfig, runtime: tokio::runtime::Handle) -> Result<Self> {
         config.validate()?;
         let config = Arc::new(config);
 
@@ -157,10 +154,7 @@ impl LanceCorpusProvider {
     }
 }
 
-fn build_initial_state(
-    config: &CorpusConfig,
-    rows: Vec<CorpusChunkRow>,
-) -> Result<ProviderState> {
+fn build_initial_state(config: &CorpusConfig, rows: Vec<CorpusChunkRow>) -> Result<ProviderState> {
     let mut state = ProviderState {
         raw_manifest: Arc::new(empty_raw_manifest(config)?),
         manifest: Arc::new(empty_manifest(config)?),
@@ -324,7 +318,9 @@ fn build_placeholder_segment(row: &CorpusChunkRow, chunk_id: ChunkId) -> Result<
     let archetype_start = AudioStream::update_fields()
         .with_chunk(AudioChunk::from(vec![0u8]))
         .with_duration_samples(AudioDurationSamples::from(0u64))
-        .with_sequence_number(AudioSequenceNumber::from(row.sequence_no as u64 * 1_000_000));
+        .with_sequence_number(AudioSequenceNumber::from(
+            row.sequence_no as u64 * 1_000_000,
+        ));
     let archetype_end = AudioStream::update_fields()
         .with_chunk(AudioChunk::from(vec![0u8]))
         .with_duration_samples(AudioDurationSamples::from(0u64))

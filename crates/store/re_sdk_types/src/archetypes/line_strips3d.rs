@@ -28,7 +28,9 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Many strips
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_line_strip3d_batch").spawn()?;
+///     let rec =
+///         rerun::RecordingStreamBuilder::new("rerun_example_line_strip3d_batch")
+///             .spawn()?;
 ///
 ///     let strip1 = [[0., 0., 2.], [1., 0., 2.], [1., 1., 2.], [0., 1., 2.]];
 ///     let strip2 = [
@@ -65,7 +67,10 @@ use ::re_types_core::{DeserializationError, DeserializationResult};
 /// ### Lines with scene & UI radius each
 /// ```ignore
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let rec = rerun::RecordingStreamBuilder::new("rerun_example_line_strip3d_ui_radius").spawn()?;
+///     let rec = rerun::RecordingStreamBuilder::new(
+///         "rerun_example_line_strip3d_ui_radius",
+///     )
+///     .spawn()?;
 ///
 ///     // A blue line with a scene unit radii of 0.01.
 ///     let points = [[0., 0., 0.], [0., 0., 1.], [1., 0., 0.], [1., 0., 1.]];
