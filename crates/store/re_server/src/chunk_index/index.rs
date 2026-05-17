@@ -46,6 +46,15 @@ impl From<&IndexProperties> for IndexType {
 }
 
 impl super::Index {
+    /// Build the Lance index after existing chunks have been backfilled.
+    pub async fn create_lance_index(&self) -> Result<(), StoreError> {
+        let mut lance: lance::Dataset = self.lance_dataset.cloned();
+        create_lance_index(&mut lance, &self.config.properties).await?;
+        lance.checkout_latest().await?;
+        self.lance_dataset.replace(lance);
+        Ok(())
+    }
+
     /// Store chunks in the index.
     pub async fn store_chunks(
         &self,
@@ -341,7 +350,9 @@ pub async fn create_index(
 
     let mut lance_table = create_lance_dataset(&path, types).await?;
 
-    create_lance_index(&mut lance_table, &config.properties).await?;
+    if index_type != IndexType::VectorIvfPq {
+        create_lance_index(&mut lance_table, &config.properties).await?;
+    }
 
     Ok(super::Index {
         lance_dataset: ArcCell::new(lance_table),
@@ -432,7 +443,7 @@ async fn create_lance_index(
 
             let lance_metric = match metric {
                 VectorDistanceMetric::Unspecified => {
-                    return Err(StoreError::IndexingError(
+                    return Err(StoreError::InvalidIndex(
                         "Unspecified distance metric".to_owned(),
                     ));
                 }
@@ -457,15 +468,20 @@ async fn create_lance_index(
     {
         Ok(_) => Ok(()),
 
-        // Some failures are expected and ok
-        Err(lance::Error::Index { message, .. }) if message.contains("already exists") => Ok(()),
+        // `DatasetChunkIndexes::add_index` owns the duplicate policy before this
+        // helper is called. If Lance still reports an existing index, preserve the
+        // same user-visible `AlreadyExists` state instead of treating it as success.
+        Err(lance::Error::Index { message, .. }) if message.contains("already exists") => {
+            Err(StoreError::IndexAlreadyExists(FIELD_INSTANCE.to_owned()))
+        }
 
         Err(lance::Error::Index { ref message, .. })
             if message.contains("Not enough rows to train PQ")
                 || message.contains("KMeans: can not train") =>
         {
-            tracing::warn!("not enough rows to train index yet");
-            Ok(())
+            Err(StoreError::IndexPreconditionFailed(
+                "not enough rows to train PQ vector index".to_owned(),
+            ))
         }
 
         Err(lance::Error::NotSupported { source, .. })
@@ -473,10 +489,11 @@ async fn create_lance_index(
                 .to_string()
                 .contains("empty vector indices with train=False") =>
         {
-            tracing::warn!("not enough rows to train index yet");
-            Ok(())
+            Err(StoreError::IndexPreconditionFailed(
+                "not enough rows to train PQ vector index".to_owned(),
+            ))
         }
-        Err(err) => Err(err),
+        Err(err) => Err(err.into()),
     }?;
 
     Ok(())

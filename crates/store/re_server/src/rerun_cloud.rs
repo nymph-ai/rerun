@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arrow::array::BinaryArray;
-use arrow::record_batch::RecordBatch;
+use arrow::array::{Array as _, BinaryArray, Float32Array};
+use arrow::datatypes::{DataType, Schema};
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use cfg_if::cfg_if;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::prelude::SessionContext;
@@ -21,13 +22,13 @@ use re_log_types::{
 };
 use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService;
 use re_protos::cloud::v1alpha1::{
-    DeleteEntryResponse, EntryDetails, EntryKind, FetchChunksRequest,
-    GetDatasetManifestSchemaRequest, GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse,
-    GetRrdManifestResponse, GetSegmentTableSchemaResponse, QueryDatasetResponse,
-    QueryTasksOnCompletionRequest, QueryTasksOnCompletionResponse, QueryTasksRequest,
-    QueryTasksResponse, RegisterTableRequest, RegisterTableResponse, RegisterWithDatasetResponse,
-    ScanDatasetManifestRequest, ScanDatasetManifestResponse, ScanSegmentTableResponse,
-    ScanTableResponse,
+    CreateTableVectorIndexRequest, CreateTableVectorIndexResponse, DeleteEntryResponse,
+    EntryDetails, EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
+    GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse, GetRrdManifestResponse,
+    GetSegmentTableSchemaResponse, QueryDatasetResponse, QueryTasksOnCompletionRequest,
+    QueryTasksOnCompletionResponse, QueryTasksRequest, QueryTasksResponse, RegisterTableRequest,
+    RegisterTableResponse, RegisterWithDatasetResponse, ScanDatasetManifestRequest,
+    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse, SearchTableVectorRequest,
 };
 use re_protos::common::v1alpha1::TaskId;
 use re_protos::common::v1alpha1::ext::{IfDuplicateBehavior, SegmentId};
@@ -402,7 +403,185 @@ decl_stream!(ScanDatasetManifestResponseStream<manifest:ScanDatasetManifestRespo
 decl_stream!(ScanSegmentTableResponseStream<manifest:ScanSegmentTableResponse>);
 decl_stream!(ScanTableResponseStream<rerun_cloud:ScanTableResponse>);
 decl_stream!(SearchDatasetResponseStream<manifest:SearchDatasetResponse>);
+pub type SearchTableVectorResponseStreamType = std::pin::Pin<
+    Box<
+        dyn futures::Stream<
+                Item = tonic::Result<re_protos::cloud::v1alpha1::SearchTableVectorResponseStream>,
+            > + Send,
+    >,
+>;
 decl_stream!(UnregisterFromDatasetResponseStream<manifest:UnregisterFromDatasetResponse>);
+
+fn table_id_from_request(
+    table_id: Option<re_protos::common::v1alpha1::EntryId>,
+) -> tonic::Result<EntryId> {
+    table_id
+        .ok_or_else(|| Status::invalid_argument("table_id is required"))?
+        .try_into()
+        .map_err(|err| Status::invalid_argument(format!("invalid table_id: {err:#}")))
+}
+
+#[cfg(feature = "lance")]
+fn validate_fixed_size_list_float32_column(
+    schema: &arrow::datatypes::Schema,
+    column: &str,
+) -> tonic::Result<i32> {
+    if column.is_empty() {
+        return Err(Status::invalid_argument("column is required"));
+    }
+
+    let field = schema
+        .field_with_name(column)
+        .map_err(|_err| Status::invalid_argument(format!("column '{column}' does not exist")))?;
+
+    match field.data_type() {
+        DataType::FixedSizeList(value_field, dimension)
+            if value_field.data_type() == &DataType::Float32 && *dimension > 0 =>
+        {
+            Ok(*dimension)
+        }
+        datatype => Err(Status::invalid_argument(format!(
+            "column '{column}' must be FixedSizeList<Float32, N>, got {datatype:?}"
+        ))),
+    }
+}
+
+#[cfg(feature = "lance")]
+fn is_lance_index_already_exists(err: &lance::Error) -> bool {
+    matches!(err, lance::Error::Index { message, .. } if message.contains("already exists"))
+}
+
+#[cfg(feature = "lance")]
+fn is_lance_undertrained_index(err: &lance::Error) -> bool {
+    matches!(err, lance::Error::Index { message, .. }
+        if message.contains("Not enough rows to train PQ")
+            || message.contains("KMeans: can not train"))
+        || matches!(err, lance::Error::NotSupported { source, .. }
+            if source
+                .to_string()
+                .contains("empty vector indices with train=False"))
+}
+
+#[cfg(feature = "lance")]
+fn map_lance_index_create_error(err: lance::Error) -> tonic::Status {
+    if is_lance_index_already_exists(&err) {
+        Status::already_exists(format!("{err:#}"))
+    } else if is_lance_undertrained_index(&err) {
+        Status::failed_precondition(format!("index is under-trained: {err:#}"))
+    } else {
+        match err {
+            lance::Error::InvalidInput { .. } | lance::Error::Schema { .. } => {
+                Status::invalid_argument(format!("{err:#}"))
+            }
+            lance::Error::Index { .. } | lance::Error::NotSupported { .. } => {
+                Status::failed_precondition(format!("{err:#}"))
+            }
+            err => Status::internal(format!("{err:#}")),
+        }
+    }
+}
+
+#[cfg(feature = "lance")]
+fn map_lance_vector_search_error(err: lance::Error) -> tonic::Status {
+    match err {
+        lance::Error::IndexNotFound { .. } | lance::Error::NotFound { .. } => {
+            Status::not_found(format!("{err:#}"))
+        }
+        lance::Error::InvalidInput { .. }
+        | lance::Error::Schema { .. }
+        | lance::Error::Index { .. } => Status::invalid_argument(format!("{err:#}")),
+        lance::Error::NotSupported { .. } | lance::Error::PrerequisiteFailed { .. } => {
+            Status::failed_precondition(format!("{err:#}"))
+        }
+        err => Status::internal(format!("{err:#}")),
+    }
+}
+
+#[cfg(feature = "lance")]
+fn map_vector_distance_metric(
+    metric: re_protos::cloud::v1alpha1::VectorDistanceMetric,
+) -> tonic::Result<lance_linalg::distance::MetricType> {
+    use re_protos::cloud::v1alpha1::VectorDistanceMetric;
+
+    match metric {
+        VectorDistanceMetric::Unspecified => {
+            Err(Status::invalid_argument("distance metric is required"))
+        }
+        VectorDistanceMetric::L2 => Ok(lance_linalg::distance::MetricType::L2),
+        VectorDistanceMetric::Cosine => Ok(lance_linalg::distance::MetricType::Cosine),
+        VectorDistanceMetric::Dot => Ok(lance_linalg::distance::MetricType::Dot),
+        VectorDistanceMetric::Hamming => Ok(lance_linalg::distance::MetricType::Hamming),
+    }
+}
+
+#[cfg(feature = "lance")]
+fn decode_float32_query(bytes: &[u8]) -> tonic::Result<Float32Array> {
+    let mut stream = arrow::ipc::reader::StreamReader::try_new(bytes, None)
+        .map_err(|err| Status::invalid_argument(format!("invalid query IPC bytes: {err:#}")))?;
+
+    let batch = stream
+        .next()
+        .transpose()
+        .map_err(|err| Status::invalid_argument(format!("invalid query IPC batch: {err:#}")))?
+        .ok_or_else(|| Status::invalid_argument("query IPC stream is empty"))?;
+
+    if batch.num_columns() != 1 {
+        return Err(Status::invalid_argument(
+            "query must contain exactly one Float32 column",
+        ));
+    }
+
+    let query = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .ok_or_else(|| Status::invalid_argument("query column must be Float32"))?;
+    if query.is_empty() {
+        return Err(Status::invalid_argument("query vector must be non-empty"));
+    }
+    if query.null_count() != 0 {
+        return Err(Status::invalid_argument(
+            "query vector must not contain nulls",
+        ));
+    }
+
+    Ok(query.clone())
+}
+
+#[cfg(feature = "lance")]
+fn reorder_table_vector_search_batch(
+    batch: &RecordBatch,
+    table_schema: &arrow::datatypes::SchemaRef,
+) -> tonic::Result<RecordBatch> {
+    let batch_schema = batch.schema();
+    let mut fields = Vec::with_capacity(table_schema.fields().len() + 1);
+    let mut columns = Vec::with_capacity(table_schema.fields().len() + 1);
+
+    for field in table_schema.fields() {
+        let index = batch_schema.index_of(field.name()).map_err(|err| {
+            Status::internal(format!("search result missing table column: {err:#}"))
+        })?;
+        fields.push(Arc::clone(field));
+        columns.push(Arc::clone(batch.column(index)));
+    }
+
+    let distance_index = batch_schema
+        .index_of("_distance")
+        .map_err(|err| Status::internal(format!("search result missing _distance: {err:#}")))?;
+    fields.push(Arc::clone(&batch_schema.fields()[distance_index]));
+    columns.push(Arc::clone(batch.column(distance_index)));
+
+    let schema = Arc::new(Schema::new_with_metadata(
+        fields,
+        batch_schema.metadata().clone(),
+    ));
+    RecordBatch::try_new_with_options(
+        schema,
+        columns,
+        &RecordBatchOptions::default().with_row_count(Some(batch.num_rows())),
+    )
+    .map_err(|err| Status::internal(format!("could not reorder search result batch: {err:#}")))
+}
 
 impl RerunCloudHandler {
     async fn find_datasets(
@@ -1992,6 +2171,213 @@ impl RerunCloudService for RerunCloudHandler {
         ))
     }
 
+    async fn create_table_vector_index(
+        &self,
+        request: tonic::Request<CreateTableVectorIndexRequest>,
+    ) -> tonic::Result<tonic::Response<CreateTableVectorIndexResponse>> {
+        cfg_if! {
+            if #[cfg(feature = "lance")] {
+                use lance::index::vector::VectorIndexParams;
+                use lance_index::{DatasetIndexExt as _, IndexType};
+
+                let CreateTableVectorIndexRequest {
+                    table_id,
+                    column,
+                    index,
+                    replace,
+                } = request.into_inner();
+
+                let table_id = table_id_from_request(table_id)?;
+                let index = index.ok_or_else(|| Status::invalid_argument("index is required"))?;
+
+                let num_sub_vectors = index
+                    .num_sub_vectors
+                    .ok_or_else(|| Status::invalid_argument("index.num_sub_vectors is required"))?;
+                if num_sub_vectors == 0 {
+                    return Err(Status::invalid_argument("index.num_sub_vectors must be greater than zero"));
+                }
+                if index.target_partition_num_rows == Some(0) {
+                    return Err(Status::invalid_argument(
+                        "index.target_partition_num_rows must be greater than zero",
+                    ));
+                }
+
+                let lance_metric = map_vector_distance_metric(index.distance_metrics())?;
+
+                let dataset = {
+                    let store = self.store.read().await;
+                    let table = store
+                        .table(table_id)
+                        .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+
+                    validate_fixed_size_list_float32_column(table.schema().as_ref(), &column)?;
+                    table.lance_dataset()?
+                };
+
+                let field_id = dataset
+                    .schema()
+                    .field_id(column.as_str())
+                    .map_err(|err| Status::invalid_argument(format!("{err:#}")))?;
+                let index_exists = dataset
+                    .load_indices()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?
+                    .iter()
+                    .any(|metadata| metadata.fields.contains(&field_id));
+                if index_exists && !replace {
+                    return Err(Status::already_exists(format!(
+                        "Vector index already exists for table column '{column}'"
+                    )));
+                }
+
+                let ivf_params = lance_index::vector::ivf::IvfBuildParams {
+                    target_partition_size: index.target_partition_num_rows.map(|value| value as usize),
+                    ..Default::default()
+                };
+                let pq_params = lance_index::vector::pq::PQBuildParams {
+                    num_sub_vectors: num_sub_vectors as usize,
+                    ..Default::default()
+                };
+                let params = VectorIndexParams::with_ivf_pq_params(lance_metric, ivf_params, pq_params);
+
+                let mut updated_dataset = dataset.as_ref().clone();
+                updated_dataset
+                    .create_index(
+                        &[column.as_str()],
+                        IndexType::Vector,
+                        None,
+                        &params,
+                        replace,
+                    )
+                    .await
+                    .map_err(map_lance_index_create_error)?;
+                updated_dataset
+                    .checkout_latest()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?;
+
+                let updated_dataset = Arc::new(
+                    lance::Dataset::open(updated_dataset.uri())
+                        .await
+                        .map_err(|err| Status::internal(format!("{err:#}")))?,
+                );
+
+                let mut store = self.store.write().await;
+                let table = store
+                    .table_mut(table_id)
+                    .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+                table.replace_lance_dataset(updated_dataset)?;
+
+                Ok(tonic::Response::new(CreateTableVectorIndexResponse {}))
+            } else {
+                let _ = request;
+                Err(Status::unimplemented(
+                    "create_table_vector_index requires the `lance` feature",
+                ))
+            }
+        }
+    }
+
+    type SearchTableVectorStream = SearchTableVectorResponseStreamType;
+
+    async fn search_table_vector(
+        &self,
+        request: tonic::Request<SearchTableVectorRequest>,
+    ) -> tonic::Result<tonic::Response<Self::SearchTableVectorStream>> {
+        cfg_if! {
+            if #[cfg(feature = "lance")] {
+                use lance_index::DatasetIndexExt as _;
+
+                let SearchTableVectorRequest {
+                    table_id,
+                    column,
+                    query,
+                    top_k,
+                } = request.into_inner();
+
+                if top_k == 0 {
+                    return Err(Status::invalid_argument("top_k must be greater than zero"));
+                }
+
+                let table_id = table_id_from_request(table_id)?;
+                let query = decode_float32_query(&query)?;
+
+                let (dataset, table_schema, dimension) = {
+                    let store = self.store.read().await;
+                    let table = store
+                        .table(table_id)
+                        .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+                    let table_schema = table.schema();
+                    let dimension = validate_fixed_size_list_float32_column(
+                        table_schema.as_ref(),
+                        &column,
+                    )?;
+                    let dataset = table.lance_dataset()?;
+                    (dataset, table_schema, dimension)
+                };
+
+                if query.len() != dimension as usize {
+                    return Err(Status::invalid_argument(format!(
+                        "query vector dimension {} does not match column '{column}' dimension {dimension}",
+                        query.len()
+                    )));
+                }
+
+                let field_id = dataset
+                    .schema()
+                    .field_id(column.as_str())
+                    .map_err(|err| Status::invalid_argument(format!("{err:#}")))?;
+                let index_exists = dataset
+                    .load_indices()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?
+                    .iter()
+                    .any(|metadata| metadata.fields.contains(&field_id));
+                if !index_exists {
+                    return Err(Status::not_found(format!(
+                        "Vector index not found for table column '{column}'"
+                    )));
+                }
+
+                let projected_columns = table_schema
+                    .fields()
+                    .iter()
+                    .map(|field| field.name().clone())
+                    .collect::<Vec<_>>();
+
+                let mut scanner = dataset.scan();
+                scanner
+                    .nearest(&column, &query, top_k as usize)
+                    .map_err(map_lance_vector_search_error)?;
+                scanner
+                    .project(&projected_columns)
+                    .map_err(map_lance_vector_search_error)?;
+
+                let stream = scanner
+                    .try_into_stream()
+                    .await
+                    .map_err(map_lance_vector_search_error)?;
+
+                let response_stream = stream.map(move |batch| {
+                    let batch = batch.map_err(map_lance_vector_search_error)?;
+                    let batch = reorder_table_vector_search_batch(&batch, &table_schema)?;
+                    Ok(re_protos::cloud::v1alpha1::SearchTableVectorResponseStream {
+                        data: Some(batch.into()),
+                    })
+                });
+
+                Ok(tonic::Response::new(
+                    Box::pin(response_stream) as Self::SearchTableVectorStream
+                ))
+            } else {
+                let _ = request;
+                Err(Status::unimplemented(
+                    "search_table_vector requires the `lance` feature",
+                ))
+            }
+        }
+    }
+
     // --- Tasks service ---
 
     async fn query_tasks(
@@ -2342,4 +2728,327 @@ fn get_chunks_for_query_results(
     }
 
     (all_chunks, all_missing.into_iter().collect())
+}
+#[cfg(all(test, feature = "lance"))]
+mod table_vector_search_tests {
+    use std::sync::Arc;
+
+    use arrow::{
+        array::{
+            Array as _, FixedSizeListBuilder, Float32Array, Float32Builder, Int32Array, StringArray,
+        },
+        datatypes::{DataType, Field, Schema},
+        ipc::writer::StreamWriter,
+    };
+    use lance_index::DatasetIndexExt as _;
+    use re_log_types::EntryName;
+    use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService as _;
+    use re_protos::cloud::v1alpha1::{
+        CreateTableVectorIndexRequest, SearchTableVectorRequest, VectorDistanceMetric,
+        VectorIvfPqIndex,
+    };
+    use tempfile::TempDir;
+
+    use super::*;
+
+    const VECTOR_COLUMN: &str = "embedding";
+    const DIMENSION: i32 = 4;
+    const ROW_COUNT: i32 = 320;
+
+    fn vector_for_row(row: i32) -> [f32; DIMENSION as usize] {
+        [
+            row as f32,
+            (row % 17) as f32,
+            ((row * 7) % 31) as f32,
+            1.0 + (row % 5) as f32,
+        ]
+    }
+
+    fn vector_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(
+                VECTOR_COLUMN,
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    DIMENSION,
+                ),
+                false,
+            ),
+            Field::new("label", DataType::Utf8, false),
+        ]))
+    }
+
+    fn non_vector_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(VECTOR_COLUMN, DataType::Float32, false),
+        ]))
+    }
+
+    fn vector_batch(row_count: i32) -> anyhow::Result<RecordBatch> {
+        let mut vector_builder = FixedSizeListBuilder::new(Float32Builder::new(), DIMENSION);
+        for row in 0..row_count {
+            for value in vector_for_row(row) {
+                vector_builder.values().append_value(value);
+            }
+            vector_builder.append(true);
+        }
+
+        let labels = (0..row_count)
+            .map(|row| format!("row-{row}"))
+            .collect::<Vec<_>>();
+
+        Ok(RecordBatch::try_new(
+            vector_schema(),
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..row_count)),
+                Arc::new(vector_builder.finish()),
+                Arc::new(StringArray::from(labels)),
+            ],
+        )?)
+    }
+
+    fn non_vector_batch(row_count: i32) -> anyhow::Result<RecordBatch> {
+        Ok(RecordBatch::try_new(
+            non_vector_schema(),
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..row_count)),
+                Arc::new(Float32Array::from_iter_values(
+                    (0..row_count).map(|row| row as f32),
+                )),
+            ],
+        )?)
+    }
+
+    async fn handler_with_table(
+        schema: Arc<Schema>,
+        batch: RecordBatch,
+    ) -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)> {
+        let tempdir = tempfile::tempdir()?;
+        let table_url = url::Url::from_directory_path(tempdir.path().join("table.lance"))
+            .map_err(|()| anyhow::anyhow!("failed to convert tempdir path to file URL"))?;
+
+        let mut store = InMemoryStore::default();
+        let table_entry = store
+            .create_table_entry(EntryName::new("vectors")?, &table_url, schema)
+            .await?;
+        let table_id = table_entry.details.id;
+        store
+            .table_mut(table_id)
+            .ok_or_else(|| anyhow::anyhow!("missing test table"))?
+            .write_table(batch, InsertOp::Append)
+            .await?;
+
+        Ok((
+            RerunCloudHandler::new(RerunCloudHandlerSettings::default(), store),
+            table_id,
+            tempdir,
+        ))
+    }
+
+    async fn handler_with_vector_table() -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)> {
+        handler_with_table(vector_schema(), vector_batch(ROW_COUNT)?).await
+    }
+
+    async fn handler_with_non_vector_table() -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)>
+    {
+        handler_with_table(non_vector_schema(), non_vector_batch(ROW_COUNT)?).await
+    }
+
+    fn create_index_request(table_id: EntryId, replace: bool) -> CreateTableVectorIndexRequest {
+        CreateTableVectorIndexRequest {
+            table_id: Some(table_id.into()),
+            column: VECTOR_COLUMN.to_owned(),
+            index: Some(VectorIvfPqIndex {
+                num_sub_vectors: Some(1),
+                distance_metrics: VectorDistanceMetric::L2 as i32,
+                target_partition_num_rows: Some(64),
+            }),
+            replace,
+        }
+    }
+
+    fn encode_query(values: &[f32]) -> anyhow::Result<Vec<u8>> {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "query",
+            DataType::Float32,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Float32Array::from(values.to_vec()))],
+        )?;
+
+        let mut buffer = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buffer, schema.as_ref())?;
+            writer.write(&batch)?;
+            writer.finish()?;
+        }
+        Ok(buffer)
+    }
+
+    async fn create_index(
+        handler: &RerunCloudHandler,
+        table_id: EntryId,
+        replace: bool,
+    ) -> Result<(), tonic::Status> {
+        handler
+            .create_table_vector_index(Request::new(create_index_request(table_id, replace)))
+            .await
+            .map(|_| ())
+    }
+
+    async fn collect_search_batches(
+        handler: &RerunCloudHandler,
+        table_id: EntryId,
+        query: &[f32],
+        top_k: u32,
+    ) -> Result<Vec<RecordBatch>, tonic::Status> {
+        let response = handler
+            .search_table_vector(Request::new(SearchTableVectorRequest {
+                table_id: Some(table_id.into()),
+                column: VECTOR_COLUMN.to_owned(),
+                query: encode_query(query)
+                    .map_err(|err| tonic::Status::internal(err.to_string()))?
+                    .into(),
+                top_k,
+            }))
+            .await?;
+
+        let mut stream = response.into_inner();
+        let mut batches = Vec::new();
+        while let Some(response) = futures::TryStreamExt::try_next(&mut stream).await? {
+            let data = response
+                .data
+                .ok_or_else(|| tonic::Status::internal("missing record batch payload"))?;
+            let batch: RecordBatch =
+                data.try_into()
+                    .map_err(|err: re_protos::TypeConversionError| {
+                        tonic::Status::internal(err.to_string())
+                    })?;
+            batches.push(batch);
+        }
+        Ok(batches)
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_succeeds_on_fixed_size_list_column()
+    -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        create_index(&handler, table_id, false).await?;
+
+        let dataset = {
+            let store = handler.store.read().await;
+            store
+                .table(table_id)
+                .ok_or_else(|| anyhow::anyhow!("missing test table"))?
+                .lance_dataset()?
+        };
+        let indices = dataset.load_indices().await?;
+        assert_eq!(indices.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_replace_overwrites_existing() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        create_index(&handler, table_id, false).await?;
+
+        let err = create_index(&handler, table_id, false)
+            .await
+            .expect_err("creating the same index without replace should fail");
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+
+        create_index(&handler, table_id, true).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_rejects_non_vector_column() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_non_vector_table().await?;
+
+        let err = create_index(&handler, table_id, false)
+            .await
+            .expect_err("non-vector column should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_returns_distance_column_in_order() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+        create_index(&handler, table_id, false).await?;
+
+        let batches = collect_search_batches(&handler, table_id, &vector_for_row(42), 5).await?;
+        let batch = batches
+            .iter()
+            .find(|batch| batch.num_rows() > 0)
+            .ok_or_else(|| anyhow::anyhow!("expected at least one search result batch"))?;
+
+        let schema = batch.schema();
+        let column_names = schema
+            .fields()
+            .iter()
+            .map(|field| field.name().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(column_names, ["id", VECTOR_COLUMN, "label", "_distance"]);
+        assert_eq!(
+            batch.schema().field(batch.num_columns() - 1).data_type(),
+            &DataType::Float32
+        );
+
+        let distances = batch
+            .column(batch.num_columns() - 1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| anyhow::anyhow!("distance column was not Float32Array"))?;
+        assert!(
+            distances
+                .iter()
+                .all(|distance| distance.is_some_and(f32::is_finite))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_rejects_top_k_zero() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        let err = collect_search_batches(&handler, table_id, &vector_for_row(42), 0)
+            .await
+            .expect_err("top_k=0 should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_dimension_mismatch() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+        create_index(&handler, table_id, false).await?;
+
+        let err = collect_search_batches(&handler, table_id, &[1.0, 2.0, 3.0], 5)
+            .await
+            .expect_err("dimension mismatch should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_missing_index() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        let err = collect_search_batches(&handler, table_id, &vector_for_row(42), 5)
+            .await
+            .expect_err("missing vector index should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        Ok(())
+    }
 }

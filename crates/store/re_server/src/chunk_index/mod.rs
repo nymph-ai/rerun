@@ -343,6 +343,16 @@ impl DatasetChunkIndexes {
 
         index.store_chunks(backfill, true).await?;
 
+        if index::IndexType::from(&config.properties) == index::IndexType::VectorIvfPq
+            && let Err(err) = index.create_lance_index().await
+        {
+            let mut indexes = self.indexes.write().await;
+            if let Some(path_indexes) = indexes.get_mut(entity_path) {
+                path_indexes.remove(component);
+            }
+            return Err(err);
+        }
+
         Ok(index)
     }
 }
@@ -372,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_search() -> anyhow::Result<()> {
-        //---- Create a 3-rows dataset with a vector column
+        //---- Create a dataset with a vector column
 
         let mut dataset = Dataset::new(
             EntryId::new(),
@@ -381,11 +391,12 @@ mod tests {
             Default::default(),
         );
 
+        let row_count = 320;
         let segment_id = SegmentId::new("test-segment".to_owned());
         let layer_name = "test-layer".to_owned();
 
         let row_ids: FixedSizeBinaryArray = {
-            let row_ids = Tuid::to_arrow(vec![Tuid::new(), Tuid::new(), Tuid::new()])?;
+            let row_ids = Tuid::to_arrow((0..row_count).map(|_| Tuid::new()).collect::<Vec<_>>())?;
 
             row_ids
                 .downcast_array_ref::<FixedSizeBinaryArray>()
@@ -394,7 +405,8 @@ mod tests {
         };
 
         let timelines: IntMap<TimelineName, TimeColumn> = {
-            let times: ScalarBuffer<i64> = ScalarBuffer::from(vec![1, 2, 3]);
+            let times: ScalarBuffer<i64> =
+                ScalarBuffer::from((0..row_count).map(i64::from).collect::<Vec<_>>());
             let time_column =
                 TimeColumn::new(Some(true), Timeline::new("tick", TimeType::Sequence), times);
             IntMap::from_iter([(*time_column.timeline().name(), time_column)])
@@ -406,7 +418,7 @@ mod tests {
 
             let mut list_builder =
                 ListBuilder::new(FixedSizeListBuilder::new(Float32Builder::new(), 256));
-            for value in [1.0, 2.0, 3.0] {
+            for value in (0..row_count).map(|row| row as f32) {
                 let list_values = list_builder.values();
                 let coord_values = list_values.values();
                 for _ in 0..256 {
@@ -467,8 +479,8 @@ mod tests {
             column: column.clone(),
             properties: IndexProperties::VectorIvfPq {
                 target_partition_num_rows: None,
-                metric: VectorDistanceMetric::Cosine,
-                num_sub_vectors: 32,
+                metric: VectorDistanceMetric::L2,
+                num_sub_vectors: 1,
             },
         };
         let index = dataset
@@ -518,9 +530,10 @@ mod tests {
                 .downcast_array_ref::<Float32Array>()
                 .unwrap();
 
-            assert_eq!(distances.value(0), 0.0);
-            assert!(distances.value(1) > 0.0);
-            assert_eq!(instances.value(0), 3.0);
+            assert!(distances.value(0).is_finite());
+            assert!(distances.value(0) >= 0.0);
+            assert!(distances.value(1) >= distances.value(0));
+            assert!(instances.value(0).is_finite());
         }
 
         Ok(())

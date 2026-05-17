@@ -188,6 +188,12 @@ service RerunCloudService {
 
   rpc ScanTable(ScanTableRequest) returns (stream ScanTableResponse) {}
 
+  // Create a vector search index for a Lance-backed table column.
+  rpc CreateTableVectorIndex(CreateTableVectorIndexRequest) returns (CreateTableVectorIndexResponse) {}
+
+  // Search a vector index on a Lance-backed table column.
+  rpc SearchTableVector(SearchTableVectorRequest) returns (stream SearchTableVectorResponseStream) {}
+
   // Write record batches to a table.
   //
   // This endpoint requires the standard dataset headers.
@@ -774,6 +780,30 @@ message ScanTableRequest {
 
 message ScanTableResponse {
   rerun.common.v1alpha1.DataframePart dataframe_part = 1;
+}
+
+message CreateTableVectorIndexRequest {
+  rerun.common.v1alpha1.EntryId table_id = 1;
+  string column = 2;
+  VectorIvfPqIndex index = 3;
+  bool replace = 4;
+}
+
+message CreateTableVectorIndexResponse {}
+
+message SearchTableVectorRequest {
+  rerun.common.v1alpha1.EntryId table_id = 1;
+  string column = 2;
+
+  // Serialized Arrow Float32Array query vector.
+  bytes query = 3;
+
+  uint32 top_k = 4;
+}
+
+message SearchTableVectorResponseStream {
+  // Results as arrow RecordBatch, including a `_distance` column.
+  rerun.common.v1alpha1.DataframePart data = 1;
 }
 
 enum TableInsertMode {

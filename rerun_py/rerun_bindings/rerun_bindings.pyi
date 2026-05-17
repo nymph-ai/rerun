@@ -1121,6 +1121,18 @@ class TableEntryInternal:
         batches: pa.RecordBatchReader,
         insert_mode: TableInsertModeInternal,
     ) -> None: ...
+    def create_vector_index(
+        self,
+        column: str,
+        metric: VectorDistanceMetric | str = ...,
+        replace: bool = False,
+    ) -> None: ...
+    def search_vector(
+        self,
+        query: Any,  # VectorLike
+        column: str,
+        top_k: int,
+    ) -> dfn.DataFrame: ...
 
 class TableInsertModeInternal:
     """The modes of operation when writing tables."""

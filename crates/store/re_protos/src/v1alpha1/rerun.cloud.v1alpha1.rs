@@ -1068,6 +1068,77 @@ impl ::prost::Name for ScanTableResponse {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateTableVectorIndexRequest {
+    #[prost(message, optional, tag = "1")]
+    pub table_id: ::core::option::Option<super::super::common::v1alpha1::EntryId>,
+    #[prost(string, tag = "2")]
+    pub column: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub index: ::core::option::Option<VectorIvfPqIndex>,
+    #[prost(bool, tag = "4")]
+    pub replace: bool,
+}
+impl ::prost::Name for CreateTableVectorIndexRequest {
+    const NAME: &'static str = "CreateTableVectorIndexRequest";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.CreateTableVectorIndexRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.CreateTableVectorIndexRequest".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateTableVectorIndexResponse {}
+impl ::prost::Name for CreateTableVectorIndexResponse {
+    const NAME: &'static str = "CreateTableVectorIndexResponse";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.CreateTableVectorIndexResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.CreateTableVectorIndexResponse".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SearchTableVectorRequest {
+    #[prost(message, optional, tag = "1")]
+    pub table_id: ::core::option::Option<super::super::common::v1alpha1::EntryId>,
+    #[prost(string, tag = "2")]
+    pub column: ::prost::alloc::string::String,
+    /// Serialized Arrow Float32Array query vector.
+    #[prost(bytes = "bytes", tag = "3")]
+    pub query: ::prost::bytes::Bytes,
+    #[prost(uint32, tag = "4")]
+    pub top_k: u32,
+}
+impl ::prost::Name for SearchTableVectorRequest {
+    const NAME: &'static str = "SearchTableVectorRequest";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.SearchTableVectorRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.SearchTableVectorRequest".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SearchTableVectorResponseStream {
+    /// Results as arrow RecordBatch, including a `_distance` column.
+    #[prost(message, optional, tag = "1")]
+    pub data: ::core::option::Option<super::super::common::v1alpha1::DataframePart>,
+}
+impl ::prost::Name for SearchTableVectorResponseStream {
+    const NAME: &'static str = "SearchTableVectorResponseStream";
+    const PACKAGE: &'static str = "rerun.cloud.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "rerun.cloud.v1alpha1.SearchTableVectorResponseStream".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/rerun.cloud.v1alpha1.SearchTableVectorResponseStream".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WriteTableRequest {
     #[prost(message, optional, tag = "1")]
     pub dataframe_part: ::core::option::Option<super::super::common::v1alpha1::DataframePart>,
@@ -2690,6 +2761,50 @@ pub mod rerun_cloud_service_client {
             ));
             self.inner.server_streaming(req, path, codec).await
         }
+        /// Create a vector search index for a Lance-backed table column.
+        pub async fn create_table_vector_index(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateTableVectorIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTableVectorIndexResponse>,
+            tonic::Status,
+        > {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/rerun.cloud.v1alpha1.RerunCloudService/CreateTableVectorIndex",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "rerun.cloud.v1alpha1.RerunCloudService",
+                "CreateTableVectorIndex",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Search a vector index on a Lance-backed table column.
+        pub async fn search_table_vector(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SearchTableVectorRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::SearchTableVectorResponseStream>>,
+            tonic::Status,
+        > {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/rerun.cloud.v1alpha1.RerunCloudService/SearchTableVector",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "rerun.cloud.v1alpha1.RerunCloudService",
+                "SearchTableVector",
+            ));
+            self.inner.server_streaming(req, path, codec).await
+        }
         /// Write record batches to a table.
         ///
         /// This endpoint requires the standard dataset headers.
@@ -3066,6 +3181,24 @@ pub mod rerun_cloud_service_server {
             &self,
             request: tonic::Request<super::ScanTableRequest>,
         ) -> std::result::Result<tonic::Response<Self::ScanTableStream>, tonic::Status>;
+        /// Create a vector search index for a Lance-backed table column.
+        async fn create_table_vector_index(
+            &self,
+            request: tonic::Request<super::CreateTableVectorIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTableVectorIndexResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the SearchTableVector method.
+        type SearchTableVectorStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::SearchTableVectorResponseStream, tonic::Status>,
+            > + std::marker::Send
+            + 'static;
+        /// Search a vector index on a Lance-backed table column.
+        async fn search_table_vector(
+            &self,
+            request: tonic::Request<super::SearchTableVectorRequest>,
+        ) -> std::result::Result<tonic::Response<Self::SearchTableVectorStream>, tonic::Status>;
         /// Write record batches to a table.
         ///
         /// This endpoint requires the standard dataset headers.
@@ -4370,6 +4503,93 @@ pub mod rerun_cloud_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ScanTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rerun.cloud.v1alpha1.RerunCloudService/CreateTableVectorIndex" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateTableVectorIndexSvc<T: RerunCloudService>(pub Arc<T>);
+                    impl<T: RerunCloudService>
+                        tonic::server::UnaryService<super::CreateTableVectorIndexRequest>
+                        for CreateTableVectorIndexSvc<T>
+                    {
+                        type Response = super::CreateTableVectorIndexResponse;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateTableVectorIndexRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RerunCloudService>::create_table_vector_index(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateTableVectorIndexSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rerun.cloud.v1alpha1.RerunCloudService/SearchTableVector" => {
+                    #[allow(non_camel_case_types)]
+                    struct SearchTableVectorSvc<T: RerunCloudService>(pub Arc<T>);
+                    impl<T: RerunCloudService>
+                        tonic::server::ServerStreamingService<super::SearchTableVectorRequest>
+                        for SearchTableVectorSvc<T>
+                    {
+                        type Response = super::SearchTableVectorResponseStream;
+                        type ResponseStream = T::SearchTableVectorStream;
+                        type Future =
+                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SearchTableVectorRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RerunCloudService>::search_table_vector(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SearchTableVectorSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

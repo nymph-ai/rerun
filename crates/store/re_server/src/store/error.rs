@@ -61,6 +61,12 @@ pub enum Error {
     #[error("Indexing error: {0}")]
     IndexingError(String),
 
+    #[error("Invalid index request: {0}")]
+    InvalidIndex(String),
+
+    #[error("Index precondition failed: {0}")]
+    IndexPreconditionFailed(String),
+
     #[error("Error loading RRD: {0}")]
     RrdLoadingError(anyhow::Error),
 
@@ -81,6 +87,9 @@ pub enum Error {
 
     #[error("Table storage already exists at location: {0}")]
     TableStorageAlreadyExists(String),
+
+    #[error("Invalid table type: expected {expected}")]
+    InvalidTableType { expected: &'static str },
 }
 
 impl Error {
@@ -109,7 +118,9 @@ impl From<Error> for tonic::Status {
             Error::LanceError(err) => Self::internal(format!("Lance error: {err:#}")),
             Error::RrdLoadingError(err) => Self::internal(format!("{err:#}")),
 
-            Error::FailedToDecodeChunkKey(_) => Self::invalid_argument(format!("{err:#}")),
+            Error::FailedToDecodeChunkKey(_) | Error::InvalidIndex(_) => {
+                Self::invalid_argument(format!("{err:#}"))
+            }
             Error::FailedToEncodeChunkKey(_) | Error::FailedToExtractProperties(_) => {
                 Self::internal(format!("{err:#}"))
             }
@@ -121,6 +132,10 @@ impl From<Error> for tonic::Status {
             | Error::LayerAlreadyExists(_)
             | Error::IndexAlreadyExists(_)
             | Error::TableStorageAlreadyExists(_) => Self::already_exists(format!("{err:#}")),
+
+            Error::IndexPreconditionFailed(_) | Error::InvalidTableType { .. } => {
+                Self::failed_precondition(format!("{err:#}"))
+            }
 
             Error::IndexingError(_) => Self::internal(format!("Indexing error: {err:#}")),
 
