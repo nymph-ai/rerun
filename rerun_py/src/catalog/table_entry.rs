@@ -1,18 +1,27 @@
 use std::sync::Arc;
 
 use arrow::ffi_stream::ArrowArrayStreamReader;
+use arrow::ipc::writer::StreamWriter;
 use arrow::pyarrow::FromPyArrow as _;
-use datafusion::catalog::TableProvider;
+use arrow::record_batch::RecordBatch;
+use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{PyAnyMethods as _, PyCapsule};
 use pyo3::{Bound, Py, PyAny, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
 use re_datafusion::TableEntryTableProvider;
 use re_protos::cloud::v1alpha1::ext::{EntryDetails, ProviderDetails, TableEntry, TableInsertMode};
+use re_protos::cloud::v1alpha1::{
+    CreateTableVectorIndexRequest, SearchTableVectorRequest, VectorIvfPqIndex,
+};
+use tokio_stream::StreamExt as _;
 
 use crate::catalog::entry::set_entry_name;
 use crate::catalog::table_provider_adapter::ffi_logical_codec_from_pycapsule;
-use crate::catalog::{PyCatalogClientInternal, PyEntryDetails, to_py_err};
+use crate::catalog::{
+    PyCatalogClientInternal, PyEntryDetails, PyTableProviderAdapterInternal,
+    VectorDistanceMetricLike, VectorLike, to_py_err,
+};
 use crate::trace_context::read_trace_context_from_python;
 use crate::utils::{get_tokio_runtime, wait_for_future};
 
@@ -136,6 +145,109 @@ impl PyTableEntryInternal {
         connection.write_table(py, entry_id, stream, insert_mode)?;
         Ok(())
     }
+
+    /// Create a vector index on a FixedSizeList<Float32, N> column.
+    #[pyo3(signature = (
+        column,
+        metric = VectorDistanceMetricLike::VectorDistanceMetric(crate::catalog::PyVectorDistanceMetric::Cosine),
+        replace = false,
+    ))]
+    fn create_vector_index(
+        self_: PyRef<'_, Self>,
+        column: String,
+        metric: VectorDistanceMetricLike,
+        replace: bool,
+    ) -> PyResult<()> {
+        let py = self_.py();
+        let _span = read_trace_context_from_python(py, "TableEntry.create_vector_index").entered();
+        let connection = self_.client.borrow(py).connection().clone();
+        let table_id = self_.entry_details.id;
+        let metric: re_protos::cloud::v1alpha1::VectorDistanceMetric = metric.try_into()?;
+
+        let request = CreateTableVectorIndexRequest {
+            table_id: Some(table_id.into()),
+            column,
+            index: Some(VectorIvfPqIndex {
+                target_partition_num_rows: None,
+                num_sub_vectors: Some(1),
+                distance_metrics: metric as i32,
+            }),
+            replace,
+        };
+
+        wait_for_future(py, async {
+            connection
+                .client()
+                .await?
+                .inner()
+                .create_table_vector_index(tonic::Request::new(request))
+                .await
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+            Ok(())
+        })
+    }
+
+    /// Search a vector index on a FixedSizeList<Float32, N> column.
+    fn search_vector<'py>(
+        self_: PyRef<'py, Self>,
+        query: VectorLike<'_>,
+        column: String,
+        top_k: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = self_.py();
+        let _span = read_trace_context_from_python(py, "TableEntry.search_vector").entered();
+        let connection = self_.client.borrow(py).connection().clone();
+        let table_id = self_.entry_details.id;
+
+        let query = record_batch_to_arrow_ipc(&query.to_record_batch()?)?;
+        let request = SearchTableVectorRequest {
+            table_id: Some(table_id.into()),
+            column,
+            query: query.into(),
+            top_k,
+        };
+
+        let provider: Arc<dyn TableProvider + Send> = wait_for_future(py, async move {
+            let mut stream = connection
+                .client()
+                .await?
+                .inner()
+                .search_table_vector(tonic::Request::new(request))
+                .await
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?
+                .into_inner();
+
+            let mut batches = Vec::new();
+            while let Some(response) = stream.next().await {
+                let response = response.map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+                let data = response
+                    .data
+                    .ok_or_else(|| PyRuntimeError::new_err("missing record batch payload"))?;
+                let batch: RecordBatch =
+                    data.try_into()
+                        .map_err(|err: re_protos::TypeConversionError| {
+                            PyRuntimeError::new_err(err.to_string())
+                        })?;
+                batches.push(batch);
+            }
+
+            let schema = batches
+                .first()
+                .ok_or_else(|| PyRuntimeError::new_err("empty vector search response"))?
+                .schema();
+            let provider = MemTable::try_new(schema, vec![batches]).map_err(to_py_err)?;
+            Ok::<_, pyo3::PyErr>(Arc::new(provider) as Arc<dyn TableProvider + Send>)
+        })?;
+
+        let table = PyTableProviderAdapterInternal::new(provider, false);
+
+        let client = self_.client.borrow(py);
+        let ctx = client.ctx(py)?;
+        let ctx = ctx.bind(py);
+        drop(client);
+
+        ctx.call_method1("read_table", (table,))
+    }
 }
 
 impl PyTableEntryInternal {
@@ -212,4 +324,19 @@ impl From<PyTableInsertModeInternal> for TableInsertMode {
             PyTableInsertModeInternal::Replace => Self::Replace,
         }
     }
+}
+
+fn record_batch_to_arrow_ipc(batch: &RecordBatch) -> PyResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut bytes, batch.schema().as_ref())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        writer
+            .write(batch)
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        writer
+            .finish()
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+    }
+    Ok(bytes)
 }
