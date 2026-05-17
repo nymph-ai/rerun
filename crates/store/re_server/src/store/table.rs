@@ -116,6 +116,37 @@ impl Table {
         }
     }
 
+    #[cfg(feature = "lance")]
+    pub fn lance_dataset(&self) -> Result<Arc<lance::Dataset>, super::error::Error> {
+        match &self.table {
+            TableType::LanceDataset(dataset) => Ok(Arc::clone(dataset)),
+            TableType::DataFusionTable(_) => Err(super::error::Error::InvalidTableType {
+                expected: "LanceDataset",
+            }),
+        }
+    }
+
+    #[cfg(feature = "lance")]
+    pub fn lance_dataset_mut(&mut self) -> Result<&mut Arc<lance::Dataset>, super::error::Error> {
+        match &mut self.table {
+            TableType::LanceDataset(dataset) => Ok(dataset),
+            TableType::DataFusionTable(_) => Err(super::error::Error::InvalidTableType {
+                expected: "LanceDataset",
+            }),
+        }
+    }
+
+    #[cfg(feature = "lance")]
+    pub fn replace_lance_dataset(
+        &mut self,
+        dataset: Arc<lance::Dataset>,
+    ) -> Result<(), super::error::Error> {
+        let existing = self.lance_dataset_mut()?;
+        *existing = dataset;
+        self.updated_at = jiff::Timestamp::now();
+        Ok(())
+    }
+
     async fn write_table_provider(
         &self,
         rb: RecordBatch,
