@@ -22,15 +22,13 @@ use re_log_types::{
 };
 use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService;
 use re_protos::cloud::v1alpha1::{
-    CancelTasksRequest, CancelTasksResponse, CreateTableVectorIndexRequest,
-    CreateTableVectorIndexResponse, DeleteEntryResponse, DoBandwidthTestResponse, EntryDetails,
-    EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
+    CreateTableVectorIndexRequest, CreateTableVectorIndexResponse, DeleteEntryResponse,
+    EntryDetails, EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
     GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse, GetRrdManifestResponse,
     GetSegmentTableSchemaResponse, QueryDatasetResponse, QueryTasksOnCompletionRequest,
     QueryTasksOnCompletionResponse, QueryTasksRequest, QueryTasksResponse, RegisterTableRequest,
     RegisterTableResponse, RegisterWithDatasetResponse, ScanDatasetManifestRequest,
-    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse,
-    SearchTableVectorRequest,
+    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse, SearchTableVectorRequest,
 };
 use re_protos::common::v1alpha1::TaskId;
 use re_protos::common::v1alpha1::ext::{IfDuplicateBehavior, SegmentId};
@@ -2730,4 +2728,327 @@ fn get_chunks_for_query_results(
     }
 
     (all_chunks, all_missing.into_iter().collect())
+}
+#[cfg(all(test, feature = "lance"))]
+mod table_vector_search_tests {
+    use std::sync::Arc;
+
+    use arrow::{
+        array::{
+            Array as _, FixedSizeListBuilder, Float32Array, Float32Builder, Int32Array, StringArray,
+        },
+        datatypes::{DataType, Field, Schema},
+        ipc::writer::StreamWriter,
+    };
+    use lance_index::DatasetIndexExt as _;
+    use re_log_types::EntryName;
+    use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService as _;
+    use re_protos::cloud::v1alpha1::{
+        CreateTableVectorIndexRequest, SearchTableVectorRequest, VectorDistanceMetric,
+        VectorIvfPqIndex,
+    };
+    use tempfile::TempDir;
+
+    use super::*;
+
+    const VECTOR_COLUMN: &str = "embedding";
+    const DIMENSION: i32 = 4;
+    const ROW_COUNT: i32 = 320;
+
+    fn vector_for_row(row: i32) -> [f32; DIMENSION as usize] {
+        [
+            row as f32,
+            (row % 17) as f32,
+            ((row * 7) % 31) as f32,
+            1.0 + (row % 5) as f32,
+        ]
+    }
+
+    fn vector_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(
+                VECTOR_COLUMN,
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    DIMENSION,
+                ),
+                false,
+            ),
+            Field::new("label", DataType::Utf8, false),
+        ]))
+    }
+
+    fn non_vector_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(VECTOR_COLUMN, DataType::Float32, false),
+        ]))
+    }
+
+    fn vector_batch(row_count: i32) -> anyhow::Result<RecordBatch> {
+        let mut vector_builder = FixedSizeListBuilder::new(Float32Builder::new(), DIMENSION);
+        for row in 0..row_count {
+            for value in vector_for_row(row) {
+                vector_builder.values().append_value(value);
+            }
+            vector_builder.append(true);
+        }
+
+        let labels = (0..row_count)
+            .map(|row| format!("row-{row}"))
+            .collect::<Vec<_>>();
+
+        Ok(RecordBatch::try_new(
+            vector_schema(),
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..row_count)),
+                Arc::new(vector_builder.finish()),
+                Arc::new(StringArray::from(labels)),
+            ],
+        )?)
+    }
+
+    fn non_vector_batch(row_count: i32) -> anyhow::Result<RecordBatch> {
+        Ok(RecordBatch::try_new(
+            non_vector_schema(),
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..row_count)),
+                Arc::new(Float32Array::from_iter_values(
+                    (0..row_count).map(|row| row as f32),
+                )),
+            ],
+        )?)
+    }
+
+    async fn handler_with_table(
+        schema: Arc<Schema>,
+        batch: RecordBatch,
+    ) -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)> {
+        let tempdir = tempfile::tempdir()?;
+        let table_url = url::Url::from_directory_path(tempdir.path().join("table.lance"))
+            .map_err(|()| anyhow::anyhow!("failed to convert tempdir path to file URL"))?;
+
+        let mut store = InMemoryStore::default();
+        let table_entry = store
+            .create_table_entry(EntryName::new("vectors")?, &table_url, schema)
+            .await?;
+        let table_id = table_entry.details.id;
+        store
+            .table_mut(table_id)
+            .ok_or_else(|| anyhow::anyhow!("missing test table"))?
+            .write_table(batch, InsertOp::Append)
+            .await?;
+
+        Ok((
+            RerunCloudHandler::new(RerunCloudHandlerSettings::default(), store),
+            table_id,
+            tempdir,
+        ))
+    }
+
+    async fn handler_with_vector_table() -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)> {
+        handler_with_table(vector_schema(), vector_batch(ROW_COUNT)?).await
+    }
+
+    async fn handler_with_non_vector_table() -> anyhow::Result<(RerunCloudHandler, EntryId, TempDir)>
+    {
+        handler_with_table(non_vector_schema(), non_vector_batch(ROW_COUNT)?).await
+    }
+
+    fn create_index_request(table_id: EntryId, replace: bool) -> CreateTableVectorIndexRequest {
+        CreateTableVectorIndexRequest {
+            table_id: Some(table_id.into()),
+            column: VECTOR_COLUMN.to_owned(),
+            index: Some(VectorIvfPqIndex {
+                num_sub_vectors: Some(1),
+                distance_metrics: VectorDistanceMetric::L2 as i32,
+                target_partition_num_rows: Some(64),
+            }),
+            replace,
+        }
+    }
+
+    fn encode_query(values: &[f32]) -> anyhow::Result<Vec<u8>> {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "query",
+            DataType::Float32,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Float32Array::from(values.to_vec()))],
+        )?;
+
+        let mut buffer = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buffer, schema.as_ref())?;
+            writer.write(&batch)?;
+            writer.finish()?;
+        }
+        Ok(buffer)
+    }
+
+    async fn create_index(
+        handler: &RerunCloudHandler,
+        table_id: EntryId,
+        replace: bool,
+    ) -> Result<(), tonic::Status> {
+        handler
+            .create_table_vector_index(Request::new(create_index_request(table_id, replace)))
+            .await
+            .map(|_| ())
+    }
+
+    async fn collect_search_batches(
+        handler: &RerunCloudHandler,
+        table_id: EntryId,
+        query: &[f32],
+        top_k: u32,
+    ) -> Result<Vec<RecordBatch>, tonic::Status> {
+        let response = handler
+            .search_table_vector(Request::new(SearchTableVectorRequest {
+                table_id: Some(table_id.into()),
+                column: VECTOR_COLUMN.to_owned(),
+                query: encode_query(query)
+                    .map_err(|err| tonic::Status::internal(err.to_string()))?
+                    .into(),
+                top_k,
+            }))
+            .await?;
+
+        let mut stream = response.into_inner();
+        let mut batches = Vec::new();
+        while let Some(response) = futures::TryStreamExt::try_next(&mut stream).await? {
+            let data = response
+                .data
+                .ok_or_else(|| tonic::Status::internal("missing record batch payload"))?;
+            let batch: RecordBatch =
+                data.try_into()
+                    .map_err(|err: re_protos::TypeConversionError| {
+                        tonic::Status::internal(err.to_string())
+                    })?;
+            batches.push(batch);
+        }
+        Ok(batches)
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_succeeds_on_fixed_size_list_column()
+    -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        create_index(&handler, table_id, false).await?;
+
+        let dataset = {
+            let store = handler.store.read().await;
+            store
+                .table(table_id)
+                .ok_or_else(|| anyhow::anyhow!("missing test table"))?
+                .lance_dataset()?
+        };
+        let indices = dataset.load_indices().await?;
+        assert_eq!(indices.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_replace_overwrites_existing() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        create_index(&handler, table_id, false).await?;
+
+        let err = create_index(&handler, table_id, false)
+            .await
+            .expect_err("creating the same index without replace should fail");
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+
+        create_index(&handler, table_id, true).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_table_vector_index_rejects_non_vector_column() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_non_vector_table().await?;
+
+        let err = create_index(&handler, table_id, false)
+            .await
+            .expect_err("non-vector column should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_returns_distance_column_in_order() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+        create_index(&handler, table_id, false).await?;
+
+        let batches = collect_search_batches(&handler, table_id, &vector_for_row(42), 5).await?;
+        let batch = batches
+            .iter()
+            .find(|batch| batch.num_rows() > 0)
+            .ok_or_else(|| anyhow::anyhow!("expected at least one search result batch"))?;
+
+        let schema = batch.schema();
+        let column_names = schema
+            .fields()
+            .iter()
+            .map(|field| field.name().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(column_names, ["id", VECTOR_COLUMN, "label", "_distance"]);
+        assert_eq!(
+            batch.schema().field(batch.num_columns() - 1).data_type(),
+            &DataType::Float32
+        );
+
+        let distances = batch
+            .column(batch.num_columns() - 1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| anyhow::anyhow!("distance column was not Float32Array"))?;
+        assert!(
+            distances
+                .iter()
+                .all(|distance| distance.is_some_and(f32::is_finite))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_rejects_top_k_zero() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        let err = collect_search_batches(&handler, table_id, &vector_for_row(42), 0)
+            .await
+            .expect_err("top_k=0 should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_dimension_mismatch() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+        create_index(&handler, table_id, false).await?;
+
+        let err = collect_search_batches(&handler, table_id, &[1.0, 2.0, 3.0], 5)
+            .await
+            .expect_err("dimension mismatch should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_table_vector_missing_index() -> anyhow::Result<()> {
+        let (handler, table_id, _tempdir) = handler_with_vector_table().await?;
+
+        let err = collect_search_batches(&handler, table_id, &vector_for_row(42), 5)
+            .await
+            .expect_err("missing vector index should be rejected");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        Ok(())
+    }
 }
