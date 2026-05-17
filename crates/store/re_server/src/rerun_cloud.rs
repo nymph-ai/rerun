@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array};
-use arrow::datatypes::DataType;
-use arrow::record_batch::RecordBatch;
+use arrow::array::{Array as _, BinaryArray, Float32Array};
+use arrow::datatypes::{DataType, Schema};
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use cfg_if::cfg_if;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::prelude::SessionContext;
@@ -434,7 +434,7 @@ fn validate_fixed_size_list_float32_column(
 
     let field = schema
         .field_with_name(column)
-        .map_err(|_| Status::invalid_argument(format!("column '{column}' does not exist")))?;
+        .map_err(|_err| Status::invalid_argument(format!("column '{column}' does not exist")))?;
 
     match field.data_type() {
         DataType::FixedSizeList(value_field, dimension)
@@ -484,6 +484,22 @@ fn map_lance_index_create_error(err: lance::Error) -> tonic::Status {
 }
 
 #[cfg(feature = "lance")]
+fn map_lance_vector_search_error(err: lance::Error) -> tonic::Status {
+    match err {
+        lance::Error::IndexNotFound { .. } | lance::Error::NotFound { .. } => {
+            Status::not_found(format!("{err:#}"))
+        }
+        lance::Error::InvalidInput { .. }
+        | lance::Error::Schema { .. }
+        | lance::Error::Index { .. } => Status::invalid_argument(format!("{err:#}")),
+        lance::Error::NotSupported { .. } | lance::Error::PrerequisiteFailed { .. } => {
+            Status::failed_precondition(format!("{err:#}"))
+        }
+        err => Status::internal(format!("{err:#}")),
+    }
+}
+
+#[cfg(feature = "lance")]
 fn map_vector_distance_metric(
     metric: re_protos::cloud::v1alpha1::VectorDistanceMetric,
 ) -> tonic::Result<lance_linalg::distance::MetricType> {
@@ -498,6 +514,75 @@ fn map_vector_distance_metric(
         VectorDistanceMetric::Dot => Ok(lance_linalg::distance::MetricType::Dot),
         VectorDistanceMetric::Hamming => Ok(lance_linalg::distance::MetricType::Hamming),
     }
+}
+
+#[cfg(feature = "lance")]
+fn decode_float32_query(bytes: &[u8]) -> tonic::Result<Float32Array> {
+    let mut stream = arrow::ipc::reader::StreamReader::try_new(bytes, None)
+        .map_err(|err| Status::invalid_argument(format!("invalid query IPC bytes: {err:#}")))?;
+
+    let batch = stream
+        .next()
+        .transpose()
+        .map_err(|err| Status::invalid_argument(format!("invalid query IPC batch: {err:#}")))?
+        .ok_or_else(|| Status::invalid_argument("query IPC stream is empty"))?;
+
+    if batch.num_columns() != 1 {
+        return Err(Status::invalid_argument(
+            "query must contain exactly one Float32 column",
+        ));
+    }
+
+    let query = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .ok_or_else(|| Status::invalid_argument("query column must be Float32"))?;
+    if query.is_empty() {
+        return Err(Status::invalid_argument("query vector must be non-empty"));
+    }
+    if query.null_count() != 0 {
+        return Err(Status::invalid_argument(
+            "query vector must not contain nulls",
+        ));
+    }
+
+    Ok(query.clone())
+}
+
+#[cfg(feature = "lance")]
+fn reorder_table_vector_search_batch(
+    batch: &RecordBatch,
+    table_schema: &arrow::datatypes::SchemaRef,
+) -> tonic::Result<RecordBatch> {
+    let batch_schema = batch.schema();
+    let mut fields = Vec::with_capacity(table_schema.fields().len() + 1);
+    let mut columns = Vec::with_capacity(table_schema.fields().len() + 1);
+
+    for field in table_schema.fields() {
+        let index = batch_schema.index_of(field.name()).map_err(|err| {
+            Status::internal(format!("search result missing table column: {err:#}"))
+        })?;
+        fields.push(Arc::clone(field));
+        columns.push(Arc::clone(batch.column(index)));
+    }
+
+    let distance_index = batch_schema
+        .index_of("_distance")
+        .map_err(|err| Status::internal(format!("search result missing _distance: {err:#}")))?;
+    fields.push(Arc::clone(&batch_schema.fields()[distance_index]));
+    columns.push(Arc::clone(batch.column(distance_index)));
+
+    let schema = Arc::new(Schema::new_with_metadata(
+        fields,
+        batch_schema.metadata().clone(),
+    ));
+    RecordBatch::try_new_with_options(
+        schema,
+        columns,
+        &RecordBatchOptions::default().with_row_count(Some(batch.num_rows())),
+    )
+    .map_err(|err| Status::internal(format!("could not reorder search result batch: {err:#}")))
 }
 
 impl RerunCloudHandler {
@@ -2201,10 +2286,98 @@ impl RerunCloudService for RerunCloudHandler {
         &self,
         request: tonic::Request<SearchTableVectorRequest>,
     ) -> tonic::Result<tonic::Response<Self::SearchTableVectorStream>> {
-        let _ = request;
-        Err(Status::unimplemented(
-            "search_table_vector is not implemented yet",
-        ))
+        cfg_if! {
+            if #[cfg(feature = "lance")] {
+                use lance_index::DatasetIndexExt as _;
+
+                let SearchTableVectorRequest {
+                    table_id,
+                    column,
+                    query,
+                    top_k,
+                } = request.into_inner();
+
+                if top_k == 0 {
+                    return Err(Status::invalid_argument("top_k must be greater than zero"));
+                }
+
+                let table_id = table_id_from_request(table_id)?;
+                let query = decode_float32_query(&query)?;
+
+                let (dataset, table_schema, dimension) = {
+                    let store = self.store.read().await;
+                    let table = store
+                        .table(table_id)
+                        .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+                    let table_schema = table.schema();
+                    let dimension = validate_fixed_size_list_float32_column(
+                        table_schema.as_ref(),
+                        &column,
+                    )?;
+                    let dataset = table.lance_dataset()?;
+                    (dataset, table_schema, dimension)
+                };
+
+                if query.len() != dimension as usize {
+                    return Err(Status::invalid_argument(format!(
+                        "query vector dimension {} does not match column '{column}' dimension {dimension}",
+                        query.len()
+                    )));
+                }
+
+                let field_id = dataset
+                    .schema()
+                    .field_id(column.as_str())
+                    .map_err(|err| Status::invalid_argument(format!("{err:#}")))?;
+                let index_exists = dataset
+                    .load_indices()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?
+                    .iter()
+                    .any(|metadata| metadata.fields.contains(&field_id));
+                if !index_exists {
+                    return Err(Status::not_found(format!(
+                        "Vector index not found for table column '{column}'"
+                    )));
+                }
+
+                let projected_columns = table_schema
+                    .fields()
+                    .iter()
+                    .map(|field| field.name().clone())
+                    .collect::<Vec<_>>();
+
+                let mut scanner = dataset.scan();
+                scanner
+                    .nearest(&column, &query, top_k as usize)
+                    .map_err(map_lance_vector_search_error)?;
+                scanner
+                    .project(&projected_columns)
+                    .map_err(map_lance_vector_search_error)?;
+
+                let stream = scanner
+                    .try_into_stream()
+                    .await
+                    .map_err(map_lance_vector_search_error)?;
+
+                let response_stream = stream.map(move |batch| {
+                    let batch = batch.map_err(map_lance_vector_search_error)?;
+                    let batch = reorder_table_vector_search_batch(&batch, &table_schema)?;
+                    Ok(re_protos::cloud::v1alpha1::SearchTableVectorResponseStream {
+                        data: Some(batch.into()),
+                    })
+                });
+
+                Ok(tonic::Response::new(
+                    Box::pin(response_stream) as Self::SearchTableVectorStream
+                ))
+            } else {
+                let _ = request;
+                Err(Status::unimplemented(
+                    "search_table_vector requires the `lance` feature",
+                ))
+            }
+        }
     }
 
     // --- Tasks service ---
