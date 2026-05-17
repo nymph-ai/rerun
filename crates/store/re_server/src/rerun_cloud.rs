@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arrow::array::BinaryArray;
+use arrow::array::{BinaryArray, Float32Array};
+use arrow::datatypes::DataType;
 use arrow::record_batch::RecordBatch;
 use cfg_if::cfg_if;
 use datafusion::logical_expr::dml::InsertOp;
@@ -412,6 +413,92 @@ pub type SearchTableVectorResponseStreamType = std::pin::Pin<
     >,
 >;
 decl_stream!(UnregisterFromDatasetResponseStream<manifest:UnregisterFromDatasetResponse>);
+
+fn table_id_from_request(
+    table_id: Option<re_protos::common::v1alpha1::EntryId>,
+) -> tonic::Result<EntryId> {
+    table_id
+        .ok_or_else(|| Status::invalid_argument("table_id is required"))?
+        .try_into()
+        .map_err(|err| Status::invalid_argument(format!("invalid table_id: {err:#}")))
+}
+
+#[cfg(feature = "lance")]
+fn validate_fixed_size_list_float32_column(
+    schema: &arrow::datatypes::Schema,
+    column: &str,
+) -> tonic::Result<i32> {
+    if column.is_empty() {
+        return Err(Status::invalid_argument("column is required"));
+    }
+
+    let field = schema
+        .field_with_name(column)
+        .map_err(|_| Status::invalid_argument(format!("column '{column}' does not exist")))?;
+
+    match field.data_type() {
+        DataType::FixedSizeList(value_field, dimension)
+            if value_field.data_type() == &DataType::Float32 && *dimension > 0 =>
+        {
+            Ok(*dimension)
+        }
+        datatype => Err(Status::invalid_argument(format!(
+            "column '{column}' must be FixedSizeList<Float32, N>, got {datatype:?}"
+        ))),
+    }
+}
+
+#[cfg(feature = "lance")]
+fn is_lance_index_already_exists(err: &lance::Error) -> bool {
+    matches!(err, lance::Error::Index { message, .. } if message.contains("already exists"))
+}
+
+#[cfg(feature = "lance")]
+fn is_lance_undertrained_index(err: &lance::Error) -> bool {
+    matches!(err, lance::Error::Index { message, .. }
+        if message.contains("Not enough rows to train PQ")
+            || message.contains("KMeans: can not train"))
+        || matches!(err, lance::Error::NotSupported { source, .. }
+            if source
+                .to_string()
+                .contains("empty vector indices with train=False"))
+}
+
+#[cfg(feature = "lance")]
+fn map_lance_index_create_error(err: lance::Error) -> tonic::Status {
+    if is_lance_index_already_exists(&err) {
+        Status::already_exists(format!("{err:#}"))
+    } else if is_lance_undertrained_index(&err) {
+        Status::failed_precondition(format!("index is under-trained: {err:#}"))
+    } else {
+        match err {
+            lance::Error::InvalidInput { .. } | lance::Error::Schema { .. } => {
+                Status::invalid_argument(format!("{err:#}"))
+            }
+            lance::Error::Index { .. } | lance::Error::NotSupported { .. } => {
+                Status::failed_precondition(format!("{err:#}"))
+            }
+            err => Status::internal(format!("{err:#}")),
+        }
+    }
+}
+
+#[cfg(feature = "lance")]
+fn map_vector_distance_metric(
+    metric: re_protos::cloud::v1alpha1::VectorDistanceMetric,
+) -> tonic::Result<lance_linalg::distance::MetricType> {
+    use re_protos::cloud::v1alpha1::VectorDistanceMetric;
+
+    match metric {
+        VectorDistanceMetric::Unspecified => {
+            Err(Status::invalid_argument("distance metric is required"))
+        }
+        VectorDistanceMetric::L2 => Ok(lance_linalg::distance::MetricType::L2),
+        VectorDistanceMetric::Cosine => Ok(lance_linalg::distance::MetricType::Cosine),
+        VectorDistanceMetric::Dot => Ok(lance_linalg::distance::MetricType::Dot),
+        VectorDistanceMetric::Hamming => Ok(lance_linalg::distance::MetricType::Hamming),
+    }
+}
 
 impl RerunCloudHandler {
     async fn find_datasets(
@@ -2005,10 +2092,107 @@ impl RerunCloudService for RerunCloudHandler {
         &self,
         request: tonic::Request<CreateTableVectorIndexRequest>,
     ) -> tonic::Result<tonic::Response<CreateTableVectorIndexResponse>> {
-        let _ = request;
-        Err(Status::unimplemented(
-            "create_table_vector_index is not implemented yet",
-        ))
+        cfg_if! {
+            if #[cfg(feature = "lance")] {
+                use lance::index::vector::VectorIndexParams;
+                use lance_index::{DatasetIndexExt as _, IndexType};
+
+                let CreateTableVectorIndexRequest {
+                    table_id,
+                    column,
+                    index,
+                    replace,
+                } = request.into_inner();
+
+                let table_id = table_id_from_request(table_id)?;
+                let index = index.ok_or_else(|| Status::invalid_argument("index is required"))?;
+
+                let num_sub_vectors = index
+                    .num_sub_vectors
+                    .ok_or_else(|| Status::invalid_argument("index.num_sub_vectors is required"))?;
+                if num_sub_vectors == 0 {
+                    return Err(Status::invalid_argument("index.num_sub_vectors must be greater than zero"));
+                }
+                if index.target_partition_num_rows == Some(0) {
+                    return Err(Status::invalid_argument(
+                        "index.target_partition_num_rows must be greater than zero",
+                    ));
+                }
+
+                let lance_metric = map_vector_distance_metric(index.distance_metrics())?;
+
+                let dataset = {
+                    let store = self.store.read().await;
+                    let table = store
+                        .table(table_id)
+                        .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+
+                    validate_fixed_size_list_float32_column(table.schema().as_ref(), &column)?;
+                    table.lance_dataset()?
+                };
+
+                let field_id = dataset
+                    .schema()
+                    .field_id(column.as_str())
+                    .map_err(|err| Status::invalid_argument(format!("{err:#}")))?;
+                let index_exists = dataset
+                    .load_indices()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?
+                    .iter()
+                    .any(|metadata| metadata.fields.contains(&field_id));
+                if index_exists && !replace {
+                    return Err(Status::already_exists(format!(
+                        "Vector index already exists for table column '{column}'"
+                    )));
+                }
+
+                let ivf_params = lance_index::vector::ivf::IvfBuildParams {
+                    target_partition_size: index.target_partition_num_rows.map(|value| value as usize),
+                    ..Default::default()
+                };
+                let pq_params = lance_index::vector::pq::PQBuildParams {
+                    num_sub_vectors: num_sub_vectors as usize,
+                    ..Default::default()
+                };
+                let params = VectorIndexParams::with_ivf_pq_params(lance_metric, ivf_params, pq_params);
+
+                let mut updated_dataset = dataset.as_ref().clone();
+                updated_dataset
+                    .create_index(
+                        &[column.as_str()],
+                        IndexType::Vector,
+                        None,
+                        &params,
+                        replace,
+                    )
+                    .await
+                    .map_err(map_lance_index_create_error)?;
+                updated_dataset
+                    .checkout_latest()
+                    .await
+                    .map_err(|err| Status::internal(format!("{err:#}")))?;
+
+                let updated_dataset = Arc::new(
+                    lance::Dataset::open(updated_dataset.uri())
+                        .await
+                        .map_err(|err| Status::internal(format!("{err:#}")))?,
+                );
+
+                let mut store = self.store.write().await;
+                let table = store
+                    .table_mut(table_id)
+                    .ok_or_else(|| Status::not_found(format!("Table with ID {table_id} not found")))?;
+                table.replace_lance_dataset(updated_dataset)?;
+
+                Ok(tonic::Response::new(CreateTableVectorIndexResponse {}))
+            } else {
+                let _ = request;
+                Err(Status::unimplemented(
+                    "create_table_vector_index requires the `lance` feature",
+                ))
+            }
+        }
     }
 
     type SearchTableVectorStream = SearchTableVectorResponseStreamType;
