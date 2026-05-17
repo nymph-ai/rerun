@@ -19,9 +19,9 @@ pub async fn search_index(
 ) -> Result<impl Stream<Item = Result<RecordBatch, StoreError>> + use<>, StoreError> {
     let lance_dataset = index.lance_dataset.get();
 
-    if request.query.columns().len() != 1 && request.query.num_rows() != 1 {
+    if request.query.columns().len() != 1 || request.query.num_rows() == 0 {
         return Err(StoreError::IndexingError(
-            "Query must have exactly one row and one column".to_owned(),
+            "Query must have exactly one non-empty column".to_owned(),
         ));
     }
 
