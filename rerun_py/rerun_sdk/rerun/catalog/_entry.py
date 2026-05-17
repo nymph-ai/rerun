@@ -1263,6 +1263,53 @@ class TableEntry(Entry[TableEntryInternal]):
 
         return self.reader().schema()
 
+    def create_vector_index(
+        self,
+        column: str,
+        metric: VectorDistanceMetric | str,
+        replace: bool = False,
+    ) -> None:
+        """
+        Create a vector index on a `fixed_size_list<float32>[N]` column.
+
+        Parameters
+        ----------
+        column
+            Name of the vector column to index.
+        metric
+            Distance metric to use for the index. ("L2", "Cosine", "Dot", "Hamming")
+        replace
+            If true, replace an existing index on the same column.
+
+        """
+
+        self._internal.create_vector_index(column, metric, replace)
+
+    def search_vector(
+        self,
+        query: Any,  # VectorLike
+        column: str,
+        top_k: int,
+    ) -> datafusion.DataFrame:
+        """
+        Search a vector index on a `fixed_size_list<float32>[N]` column.
+
+        The returned DataFrame contains all original table columns, followed by
+        a final `_distance` column containing the vector distance.
+
+        Parameters
+        ----------
+        query
+            Query vector.
+        column
+            Name of the indexed vector column to search.
+        top_k
+            Maximum number of nearest rows to return.
+
+        """
+
+        return self._internal.search_vector(query, column, top_k)
+
     # ---
 
     def append(
