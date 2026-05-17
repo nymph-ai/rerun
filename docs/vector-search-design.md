@@ -89,6 +89,42 @@ TableEntry-native vector search API for Lance tables.
   component descriptor (`crates/store/re_protos/proto/rerun/v1alpha1/cloud.proto:542`),
   not a table id and column name.
 
+## Phase 3 Proto Surface
+
+Phase 3 adds a TableEntry-native surface alongside the existing dataset chunk
+index RPCs. The committed names and field numbers are:
+
+```proto
+rpc CreateTableVectorIndex(CreateTableVectorIndexRequest) returns (CreateTableVectorIndexResponse) {}
+rpc SearchTableVector(SearchTableVectorRequest) returns (stream SearchTableVectorResponseStream) {}
+
+message CreateTableVectorIndexRequest {
+  rerun.common.v1alpha1.EntryId table_id = 1;
+  string column = 2;
+  VectorIvfPqIndex index = 3;
+  bool replace = 4;
+}
+
+message CreateTableVectorIndexResponse {}
+
+message SearchTableVectorRequest {
+  rerun.common.v1alpha1.EntryId table_id = 1;
+  string column = 2;
+  bytes query = 3;
+  uint32 top_k = 4;
+}
+
+message SearchTableVectorResponseStream {
+  rerun.common.v1alpha1.DataframePart data = 1;
+}
+```
+
+`SearchTableVectorResponseStream.data = 1` mirrors
+`SearchDatasetResponse.data = 1`, so the DataFusion adapter can use the same
+RecordBatch streaming shape. The server currently has `unimplemented` trait
+stubs for these RPCs to keep the generated service compiling; Lance-backed
+behavior remains a Phase 4 task.
+
 ## Arrow/DataFusion Marshaling
 
 - Search results are already marshaled as a DataFusion `TableProvider`.
