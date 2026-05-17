@@ -21,13 +21,15 @@ use re_log_types::{
 };
 use re_protos::cloud::v1alpha1::rerun_cloud_service_server::RerunCloudService;
 use re_protos::cloud::v1alpha1::{
-    DeleteEntryResponse, EntryDetails, EntryKind, FetchChunksRequest,
-    GetDatasetManifestSchemaRequest, GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse,
-    GetRrdManifestResponse, GetSegmentTableSchemaResponse, QueryDatasetResponse,
-    QueryTasksOnCompletionRequest, QueryTasksOnCompletionResponse, QueryTasksRequest,
-    QueryTasksResponse, RegisterTableRequest, RegisterTableResponse, RegisterWithDatasetResponse,
-    ScanDatasetManifestRequest, ScanDatasetManifestResponse, ScanSegmentTableResponse,
-    ScanTableResponse,
+    CancelTasksRequest, CancelTasksResponse, CreateTableVectorIndexRequest,
+    CreateTableVectorIndexResponse, DeleteEntryResponse, DoBandwidthTestResponse, EntryDetails,
+    EntryKind, FetchChunksRequest, GetDatasetManifestSchemaRequest,
+    GetDatasetManifestSchemaResponse, GetDatasetSchemaResponse, GetRrdManifestResponse,
+    GetSegmentTableSchemaResponse, QueryDatasetResponse, QueryTasksOnCompletionRequest,
+    QueryTasksOnCompletionResponse, QueryTasksRequest, QueryTasksResponse, RegisterTableRequest,
+    RegisterTableResponse, RegisterWithDatasetResponse, ScanDatasetManifestRequest,
+    ScanDatasetManifestResponse, ScanSegmentTableResponse, ScanTableResponse,
+    SearchTableVectorRequest,
 };
 use re_protos::common::v1alpha1::TaskId;
 use re_protos::common::v1alpha1::ext::{IfDuplicateBehavior, SegmentId};
@@ -402,6 +404,13 @@ decl_stream!(ScanDatasetManifestResponseStream<manifest:ScanDatasetManifestRespo
 decl_stream!(ScanSegmentTableResponseStream<manifest:ScanSegmentTableResponse>);
 decl_stream!(ScanTableResponseStream<rerun_cloud:ScanTableResponse>);
 decl_stream!(SearchDatasetResponseStream<manifest:SearchDatasetResponse>);
+pub type SearchTableVectorResponseStreamType = std::pin::Pin<
+    Box<
+        dyn futures::Stream<
+                Item = tonic::Result<re_protos::cloud::v1alpha1::SearchTableVectorResponseStream>,
+            > + Send,
+    >,
+>;
 decl_stream!(UnregisterFromDatasetResponseStream<manifest:UnregisterFromDatasetResponse>);
 
 impl RerunCloudHandler {
@@ -1989,6 +1998,28 @@ impl RerunCloudService for RerunCloudHandler {
 
         Ok(tonic::Response::new(
             Box::pin(resp_stream) as Self::ScanTableStream
+        ))
+    }
+
+    async fn create_table_vector_index(
+        &self,
+        request: tonic::Request<CreateTableVectorIndexRequest>,
+    ) -> tonic::Result<tonic::Response<CreateTableVectorIndexResponse>> {
+        let _ = request;
+        Err(Status::unimplemented(
+            "create_table_vector_index is not implemented yet",
+        ))
+    }
+
+    type SearchTableVectorStream = SearchTableVectorResponseStreamType;
+
+    async fn search_table_vector(
+        &self,
+        request: tonic::Request<SearchTableVectorRequest>,
+    ) -> tonic::Result<tonic::Response<Self::SearchTableVectorStream>> {
+        let _ = request;
+        Err(Status::unimplemented(
+            "search_table_vector is not implemented yet",
         ))
     }
 
